@@ -1,0 +1,77 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请不要在 issue 里粘贴 API Key。日志位于 `data/logs/app.log`，粘贴前请先脱敏。
+        Please do not paste API keys. Logs live in `data/logs/app.log` — redact them first.
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / macOS 14 / Ubuntu 24.04 …
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Python, Node.js, FFmpeg, and VideoNarrator AI version
+      placeholder: "Python 3.12.10, FFmpeg 8.1.3, v1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did this happen?
+      options:
+        - Desktop app
+        - Web app (self-hosted)
+        - Web app (hosted)
+        - Build / packaging
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which model / voice was involved?
+      options:
+        - Gemini
+        - Qwen
+        - Doubao
+        - OpenAI
+        - SiliconFlow
+        - Ollama / vLLM
+        - Edge TTS
+        - Other TTS
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,40 @@
+# AI 视频解说工作站 · systemd 服务单元模板
+#
+# 安装：
+#   sudo cp scripts/vns.service /etc/systemd/system/vns.service
+#   sudo nano /etc/systemd/system/vns.service      # 改 User= 与 WorkingDirectory
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vns
+#   sudo systemctl status vns
+#
+# 查看日志： journalctl -u vns -f
+
+[Unit]
+Description=AI 视频解说工作站
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/video-narration-station/backend
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/opt/video-narration-station/backend/.env
+ExecStart=/opt/video-narration-station/backend/.venv/bin/python -m uvicorn app.main:app \
+    --host 0.0.0.0 --port 8080 --workers 1
+Restart=on-failure
+RestartSec=5
+
+# 视频处理很吃 CPU，限制一下避免拖垮整机
+Nice=-5
+CPUWeight=200
+
+# 安全加固（若数据目录不在这些路径内请调整）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/video-narration-station/data
+
+[Install]
+WantedBy=multi-user.target

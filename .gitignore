@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+*.tsbuildinfo
+apps/web/dist/
+apps/desktop/dist/
+apps/desktop/release/
+
+# 打包产物
+services/api/dist/
+services/api/build/
+*.spec.bak
+
+# 运行时数据（上传素材、工作文件、成片、数据库、日志）
+data/
+
+# 环境变量
+services/api/.env
+.env
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

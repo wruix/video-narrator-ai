@@ -1,0 +1,64 @@
+# ============================================================
+#  VideoNarrator AI · 网页版部署
+#
+#  cp deploy/docker-compose.yml . && docker compose up -d
+#  打开 http://localhost:8080
+#
+#  公网部署请务必：
+#   1. 设置 VC_ACCESS_TOKEN（否则任何人都能用你的模型 Key）
+#   2. 在前面挂一层 Nginx / Caddy 做 HTTPS
+#   3. 用平台托管 Key（模式 B）而不是让每个用户填自己的
+# ============================================================
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: videonarrator/ai:latest
+    container_name: vns-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # 访问口令：务必改成自己的随机串
+      VC_ACCESS_TOKEN: ${VC_ACCESS_TOKEN:-please-change-me}
+      # 数据目录（挂卷持久化）
+      VC_DATA_DIR: /data
+      # 平台托管的模型 Key（模式 B）——按需取消注释
+      # VC_SERVER_KEY_GEMINI: ${GEMINI_KEY:-}
+      # VC_SERVER_KEY_OPENAI: ${OPENAI_KEY:-}
+      # VC_SERVER_KEY_QWEN: ${QWEN_KEY:-}
+      # VC_SERVER_KEY_DOUBAO: ${DOUBAO_KEY:-}
+      # 套餐与额度
+      VC_TIERS_FILE: /app/config/tiers.yaml
+      # 允许的跨域来源
+      VC_CORS_ORIGINS: ${VC_CORS_ORIGINS:-*}
+      # 反向代理后面运行
+      VC_TRUST_PROXY: "1"
+    volumes:
+      - vns-data:/data
+      - ../config/tiers.yaml:/app/config/tiers.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # 可选：Nginx 反向代理 + HTTPS
+  # proxy:
+  #   image: caddy:2-alpine
+  #   container_name: vns-proxy
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #   depends_on:
+  #     - api
+
+volumes:
+  vns-data:

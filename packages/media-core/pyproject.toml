@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-narrator-media-core"
+version = "1.0.0"
+description = "Vendor-agnostic video processing core: FFmpeg wrapper, shot detection, keyframes, subtitles, composition"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "VideoNarrator AI Contributors" }]
+keywords = ["ffmpeg", "video", "subtitles", "tts", "narration"]
+dependencies = [
+    "pillow>=10.3.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+include = ["media_core*"]
+
+[tool.ruff]
+line-length = 110

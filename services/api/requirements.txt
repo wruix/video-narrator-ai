@@ -1,0 +1,16 @@
+# ---- 核心依赖 ----
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+sqlalchemy>=2.0.30
+httpx>=0.27.0
+cryptography>=42.0.0
+python-multipart>=0.0.9
+pyyaml>=6.0
+
+# ---- monorepo 内部包（本地可编辑安装）----
+-e ../../packages/media-core
+-e ../../packages/ai-providers
+
+# ---- 可选：本地语音识别 ----
+# faster-whisper>=1.0.0

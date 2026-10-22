@@ -1,0 +1,29 @@
+{
+  "name": "video-narrator-ai",
+  "private": true,
+  "version": "1.0.0",
+  "description": "VideoNarrator AI — open-source AI video narration workstation",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "apps/web",
+    "apps/desktop",
+    "packages/ui",
+    "packages/i18n"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @vns/web",
+    "build:web": "npm run build --workspace @vns/web",
+    "build:desktop": "npm run build --workspace @vns/desktop",
+    "dev": "npm run dev --workspace @vns/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "electron@33.4.11": true
+  }
+}

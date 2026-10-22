@@ -1,0 +1,129 @@
+# ============================================================
+#  VideoNarrator AI · 服务套餐与额度配置
+#
+#  这份文件是唯一的价格与额度来源，代码里不写死任何数字。
+#  模型涨价、换供应商、或调整运营策略时只改这里，不必发版。
+#
+#  生效方式：环境变量 VC_TIERS_FILE 指向本文件（默认 config/tiers.yaml）。
+#  未提供该文件时，服务回退到内置的 self-hosted 档位（不限额度）。
+# ============================================================
+
+version: 1
+
+# 默认档位：self-hosted / free / pro / team / enterprise
+default_tier: self-hosted
+
+tiers:
+  # ---------------------------------------------------------------- 自建
+  # 用户自己部署、自己承担模型费用，因此不设额度。
+  self-hosted:
+    label: Self-hosted
+    label_zh: 自建部署
+    upload_max_mb: 4096
+    monthly_video_seconds: 0        # 0 表示不限
+    concurrent_jobs: 2
+    byok: true                      # 必须使用用户自己的 Key
+    features:
+      - local_processing
+      - srt_export
+      - all_providers
+      - api_access
+
+  # ---------------------------------------------------------------- 免费体验
+  free:
+    label: Web Free
+    label_zh: 网页免费版
+    upload_max_mb: 512
+    monthly_video_seconds: 300      # 每月 5 分钟素材
+    concurrent_jobs: 1
+    byok: false
+    features:
+      - cloud_processing
+      - srt_export
+      - all_providers
+
+  # ---------------------------------------------------------------- 专业版
+  pro:
+    label: Web Pro
+    label_zh: 网页专业版
+    upload_max_mb: 4096
+    monthly_video_seconds: 7200     # 每月 2 小时素材
+    concurrent_jobs: 3
+    byok: false
+    features:
+      - cloud_processing
+      - srt_export
+      - all_providers
+      - batch_jobs
+      - project_storage
+
+  # ---------------------------------------------------------------- 团队版
+  team:
+    label: Web Team
+    label_zh: 网页团队版
+    upload_max_mb: 4096
+    monthly_video_seconds: 43200    # 每月 12 小时素材
+    concurrent_jobs: 8
+    byok: false
+    features:
+      - cloud_processing
+      - srt_export
+      - all_providers
+      - batch_jobs
+      - project_storage
+      - shared_projects
+      - member_roles
+
+  # ---------------------------------------------------------------- 企业版
+  enterprise:
+    label: Enterprise
+    label_zh: 企业版
+    upload_max_mb: 16384
+    monthly_video_seconds: 0
+    concurrent_jobs: 32
+    byok: false
+    features:
+      - cloud_processing
+      - srt_export
+      - all_providers
+      - batch_jobs
+      - project_storage
+      - shared_projects
+      - member_roles
+      - private_deployment
+      - sla
+
+# ---------------------------------------------------------------- 计价参考
+# 仅用于展示与预估，不参与实际扣费。真实计费以服务商账单为准。
+# 单位：美元
+pricing:
+  currency: USD
+  models:
+    gemini-2.5-flash:
+      input_per_1m_tokens: 0.30
+      output_per_1m_tokens: 2.50
+    gemini-2.5-pro:
+      input_per_1m_tokens: 1.25
+      output_per_1m_tokens: 10.00
+    gpt-4o:
+      input_per_1m_tokens: 2.50
+      output_per_1m_tokens: 10.00
+    gpt-4o-mini:
+      input_per_1m_tokens: 0.15
+      output_per_1m_tokens: 0.60
+    qwen-vl-max:
+      input_per_1m_tokens: 3.00
+      output_per_1m_tokens: 9.00
+  tts:
+    edge:
+      per_1m_chars: 0.00             # 免费
+    openai-tts:
+      per_1m_chars: 15.00
+    azure-tts:
+      per_1m_chars: 4.00
+    elevenlabs:
+      per_1m_chars: 30.00
+  compute:
+    per_video_minute: 0.02          # 云端渲染的算力成本估算
+  storage:
+    per_gb_month: 0.02
