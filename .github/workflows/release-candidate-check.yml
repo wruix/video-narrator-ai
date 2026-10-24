@@ -45,18 +45,22 @@ jobs:
             label: "Windows-x64"
             platform: win
             arch_filter: "x86_64"
+            eb_target: "nsis:x64 portable:x64"
           - os: macos-15-intel
             label: "macOS-Intel-x64"
             platform: mac
             arch_filter: "x86_64"
+            eb_target: "dmg:x64 zip:x64"
           - os: macos-15
             label: "macOS-AppleSilicon-arm64"
             platform: mac
             arch_filter: "arm64"
+            eb_target: "dmg:arm64 zip:arm64"
           - os: ubuntu-latest
             label: "Linux-x64"
             platform: linux
             arch_filter: "x86_64"
+            eb_target: "AppImage:x64 deb:x64"
 
     # 通过 workflow_dispatch input 动态控制哪些平台跳过
     # 各 FFmpeg 下载步骤用 if: 检查 matrix.arch_filter 来区分目标架构
@@ -117,9 +121,16 @@ jobs:
           curl -sL -o "$TMP/ffmpeg-essentials.zip" \
             "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
           EXPECTED="60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
-          ACTUAL=$(sha256sum "$TMP/ffmpeg-essentials.zip" | awk '{print $1}')
+          # 使用标准输入重定向：避免 Git Bash 的 GNU sha256sum 对反斜杠路径
+          # ($RUNNER_TEMP) 启用文件名转义，导致哈希字段被粘连前导反斜杠。
+          ACTUAL=$(sha256sum < "$TMP/ffmpeg-essentials.zip" | awk '{print $1}')
           echo "Expected: $EXPECTED"
           echo "Actual:   $ACTUAL"
+          # 严格断言：实际值必须恰好是 64 位十六进制（比较前不删除任何字符）
+          if ! printf '%s' "$ACTUAL" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::FFmpeg SHA-256 格式非法（应为 64 位十六进制）：'$ACTUAL'"
+            exit 1
+          fi
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::FFmpeg SHA-256 不匹配！"
             exit 1
@@ -309,11 +320,74 @@ jobs:
           "$FFPROBE" -v error -show_format "$TEST_DIR/test-output.mp4" 2>&1 | head -5
 
       # --------------------------------------------------------------
-      # electron-builder 打包（--publish never 确保不发布）
+      # electron-builder 预检（只读）：确认 app-builder-bin 可执行文件真实存在
+      # 根因排查：builder-util/out/util.js 通过 require("app-builder-bin")
+      # 取 index.js 的 appBuilderPath，路径按 process.platform/arch 拼接。
+      # 本步骤在打包前固化证据，缺失即以非零退出，不跳过打包。
+      # --------------------------------------------------------------
+      - name: Preflight check app-builder-bin
+        shell: bash
+        run: |
+          set -e
+          echo "=== node / process arch ==="
+          node -e "console.log('platform=%s arch=%s execPath=%s', process.platform, process.arch, process.execPath)"
+          echo ""
+          echo "=== app-builder-bin resolution ==="
+          AB_DIR=$(node -e "console.log(require('path').dirname(require.resolve('app-builder-bin/package.json')))")
+          AB_VER=$(node -e "console.log(require('app-builder-bin/package.json').version)")
+          echo "package dir: $AB_DIR"
+          echo "package version: $AB_VER"
+          echo ""
+          echo "shell uname -m: $(uname -m)"
+          echo ""
+          echo "=== 运行时解析的二进制路径（require('app-builder-bin').appBuilderPath，与打包时 builder-util 完全同一解析） ==="
+          AB_BIN=$(node -e "console.log(require('app-builder-bin').appBuilderPath)")
+          echo "resolved: $AB_BIN"
+          if [ ! -f "$AB_BIN" ]; then
+            echo "::error::app-builder 可执行文件不存在: $AB_BIN"
+            echo "--- mac/linux/win 目录实际内容 ---"
+            ls -la "$AB_DIR/mac" "$AB_DIR/linux" "$AB_DIR/win" 2>/dev/null || true
+            exit 1
+          fi
+          if [ ! -x "$AB_BIN" ]; then
+            echo "::error::app-builder 文件存在但缺少可执行权限: $AB_BIN"
+            ls -la "$AB_BIN"
+            exit 1
+          fi
+          ls -la "$AB_BIN"
+          echo ""
+          echo "=== 受控只读启动检查（仅启动进程，不执行任何构建） ==="
+          set +e
+          "$AB_BIN" --help >/dev/null 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" = "127" ] || [ "$rc" = "126" ]; then
+            echo "::error::app-builder 无法启动 (rc=$rc, 127=ENOENT/126=EPERM)"
+            exit 1
+          fi
+          # app-builder 无 --help 时返回 usage 非零退出码属正常，只要不是 126/127 即说明进程可执行
+          echo "app-builder 进程可启动 (rc=$rc): OK"
+          echo ""
+          echo "=== electron 版本解析（验证 electron 版本锁定修复在 CI 安装后生效） ==="
+          node -e "console.log('electron installed version:', require('electron/package.json').version)"
+
+      # --------------------------------------------------------------
+      # electron-builder 打包（显式目标 :架构 + --publish never 确保不发布）
+      # 关键：CLI 的 --x64/--arm64 无法覆盖配置文件 mac.target.arch: [x64, arm64]
+      # （见 app-builder-lib/out/targets/targetFactory.js computeArchToTargetNamesMap：
+      #  配置文件 target 显式声明 arch 时优先于 CLI 架构开关），
+      # 因此这里用 "target:arch" 形式强制单架构目标：
+      #   Windows → nsis:x64 portable:x64
+      #   Intel   → dmg:x64 zip:x64
+      #   arm64   → dmg:arm64 zip:arm64
+      #   Linux   → AppImage:x64 deb:x64
       # --------------------------------------------------------------
       - name: Package desktop app (electron-builder)
         working-directory: apps/desktop
-        run: npx electron-builder --${{ matrix.platform }} --publish never
+        run: |
+          set -e
+          # shellcheck disable=SC2086
+          npx electron-builder --${{ matrix.platform }} ${{ matrix.eb_target }} --publish never
 
       # --------------------------------------------------------------
       # 记录制品信息

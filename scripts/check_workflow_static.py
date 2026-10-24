@@ -136,7 +136,49 @@ else:
 
 # ---- 9. 打包不发布
 check("electron-builder 使用 --publish never", "--publish never" in text)
-check("打包命令使用 npx electron-builder --$platform", "npx electron-builder --${{ matrix.platform }} --publish never" in text)
+check(
+    "打包命令使用 npx electron-builder --$platform + 显式 target:arch",
+    "npx electron-builder --${{ matrix.platform }} ${{ matrix.eb_target }} --publish never" in text,
+)
+
+# ---- 9b. 显式目标架构（RA-23：CLI target:arch 覆盖配置文件 mac.target.arch）
+eb_targets = re.findall(r"eb_target:\s*\"([^\"]+)\"", text)
+check(
+    "矩阵 4 平台均声明显式 eb_target（含 :arch 后缀）",
+    len(eb_targets) == 4 and all(re.search(r":(x64|arm64)\b", t) for t in eb_targets),
+    f"实际: {eb_targets}",
+)
+check(
+    "Apple Silicon 目标为 arm64、Intel/Win/Linux 目标为 x64",
+    any(t == "dmg:arm64 zip:arm64" for t in eb_targets)
+    and any(t == "dmg:x64 zip:x64" for t in eb_targets)
+    and any(t == "nsis:x64 portable:x64" for t in eb_targets)
+    and any(t == "AppImage:x64 deb:x64" for t in eb_targets),
+    f"实际: {eb_targets}",
+)
+
+# ---- 9c. Windows sha256sum 防转义解析（RA-23：反斜杠路径导致哈希粘连前导 '\'）
+win_block = text[text.index("Download & verify FFmpeg (Windows x64)"):text.index("Download & verify FFmpeg (macOS")]
+check(
+    "Windows 哈希使用 stdin 重定向解析（避免 sha256sum 文件名转义）",
+    'sha256sum < "$TMP/ffmpeg-essentials.zip"' in win_block,
+)
+check(
+    "Windows 哈希比较前做严格 64 位十六进制断言",
+    "grep -Eq '^[0-9a-f]{64}$'" in win_block,
+)
+
+# ---- 9d. app-builder-bin 预检步骤存在且缺失即失败（RA-23）
+check(
+    "Preflight check app-builder-bin 步骤存在",
+    "Preflight check app-builder-bin" in text
+    and "require('app-builder-bin').appBuilderPath" in text,
+)
+check(
+    "预检在二进制缺失/不可启动时 exit 1",
+    len(re.findall(r"app-builder 可执行文件不存在[\s\S]{0,200}?exit 1", text)) >= 1
+    and len(re.findall(r"app-builder 无法启动[\s\S]{0,120}?exit 1", text)) >= 1,
+)
 
 # ---- 10. 哈希校验失败即退出
 n_hash_exit = len(re.findall(r'SHA-256 (?:不匹配|mismatch)[\s\S]{0,80}?exit 1', text))
