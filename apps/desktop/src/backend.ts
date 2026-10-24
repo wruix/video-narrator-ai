@@ -137,9 +137,25 @@ export async function startBackend(
     );
   }
 
+  // 为打包后的后端提供确定的 FFmpeg/FFprobe 路径。
+  // 资源目录布局：resources/server/{vns-server,ffmpeg,ffprobe}
+  let ffmpegPath: string | null = null;
+  let ffprobePath: string | null = null;
+  if (resourcesPath) {
+    const serverDir = join(resourcesPath, "server");
+    ffmpegPath = join(serverDir, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+    ffprobePath = join(serverDir, process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
+  }
+
   const child = spawn(target.command, target.args, {
     cwd: target.cwd,
-    env: { ...process.env, PYTHONUTF8: "1", PYTHONUNBUFFERED: "1" },
+    env: {
+      ...process.env,
+      PYTHONUTF8: "1",
+      PYTHONUNBUFFERED: "1",
+      ...(ffmpegPath ? { VC_FFMPEG: ffmpegPath } : {}),
+      ...(ffprobePath ? { VC_FFPROBE: ffprobePath } : {}),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 

@@ -88,6 +88,7 @@ export const en: TranslationSchema = {
     title: "② Models & creative settings",
     desc: "Models differ in what they are good at: Gemini handles whole-video understanding, Qwen and Doubao handle Chinese dialogue, OpenAI is strong at rewriting copy. Switch and compare at any time.",
     analysisModel: "Video understanding model",
+    modelName: "Specific model",
     scriptModel: "Copywriter model (second pass)",
     scriptModelNone: "None — use the analysis output directly",
     asr: "Speech recognition (for original dialogue)",

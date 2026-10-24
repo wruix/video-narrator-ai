@@ -4,6 +4,7 @@
 产物： services/api/dist/server/vns-server(.exe)
 """
 
+import sys  # noqa: E402
 from pathlib import Path
 
 REPO_ROOT = Path(SPECPATH).parent.parent.parent  # noqa: F821
@@ -24,6 +25,12 @@ hiddenimports = [
 web_dist = REPO_ROOT / "apps" / "web" / "dist"
 if web_dist.exists():
     datas.append((str(web_dist), "web/dist"))
+
+# FFmpeg/FFprobe 不再由 PyInstaller 打包进 vns-server。
+# 它们作为独立资源由 Electron Builder 从 services/api/ffmpeg-bin/ 分发进 resources/server/，
+# 后端通过 Electron 主进程传入的 VC_FFMPEG / VC_FFPROBE 环境变量定位（见 apps/desktop/src/backend.ts）。
+# 这样 PyInstaller 产物目录（dist/server）只包含 vns-server 本身，不与 FFmpeg 输入耦合，
+# 也避免 FFmpeg 被重复嵌入（既编译进 EXE，又作为独立文件拷贝）。
 
 a = Analysis(  # noqa: F821
     ["build_server.py"],

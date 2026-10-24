@@ -74,6 +74,20 @@ export default function StepSettings() {
                 <span className="tag accent">{t("settings.nativeVideo")}</span>
               )}
             </div>
+            {analysisProvider && analysisProvider.models.length > 0 && (
+              <select
+                style={{ marginTop: 8 }}
+                value={current.analysis_model_name || analysisProvider.default_model}
+                onChange={(e) => void patch({ analysis_model_name: e.target.value })}
+                aria-label={t("settings.modelName")}
+              >
+                {analysisProvider.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
             {analysisProvider?.note && <div className="hint">{analysisProvider.note}</div>}
           </div>
 
@@ -100,6 +114,20 @@ export default function StepSettings() {
                 )
               ) : null}
             </div>
+            {scriptProvider && scriptProvider.models.length > 0 && (
+              <select
+                style={{ marginTop: 8 }}
+                value={current.script_model_name || scriptProvider.default_model}
+                onChange={(e) => void patch({ script_model_name: e.target.value })}
+                aria-label={t("settings.modelName")}
+              >
+                {scriptProvider.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 

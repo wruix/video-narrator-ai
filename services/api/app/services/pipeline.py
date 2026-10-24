@@ -188,7 +188,7 @@ class Pipeline:
             user_notes=p.user_notes or "",
             transcript=transcript_text,
             transcript_segments=transcript_segments,
-            model="",
+            model=(p.analysis_model_name or ""),
             key=key,
         )
         drafts, usage = await provider.analyze(req)
@@ -249,6 +249,7 @@ class Pipeline:
                     prompt=prompt,
                     system="你是专业的视频解说撰稿人。只输出 JSON。",
                     key=key,
+                    model=(p.script_model_name or ""),
                     temperature=0.75,
                     max_tokens=6000,
                     json_mode=True,

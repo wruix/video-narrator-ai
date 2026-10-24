@@ -1,0 +1,446 @@
+# 发布候选检查（非正式 Release，只构建+诊断+上传制品）
+# 不创建 GitHub Release、不创建 tag、不推送代码。
+# 权限最小化：contents: read，不写公开资源。
+# 所有 build step 统一使用 shell: bash（GitHub Runner 全平台均可用 Git Bash）。
+name: Release Candidate Check
+
+on:
+  # 安全候选构建入口：仅匹配 release-candidate/** 分支的 push 触发
+  # 不监听正式 v* tag，不会触发 release.yml 的公开发布 job。
+  # 该分支仅用于候选验证，验证完成后删除，不影响默认分支。
+  push:
+    branches:
+      - "release-candidate/**"
+  # 手动触发入口（文件已存在于远端默认分支后生效）
+  workflow_dispatch:
+    inputs:
+      skip_macos_intel:
+        description: "跳过 macOS Intel x64（Runner 标签不可用时）"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      skip_macos_arm:
+        description: "跳过 macOS Apple Silicon arm64"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+permissions:
+  contents: read
+
+jobs:
+  # ==================================================================
+  # 各平台候选构建
+  # ==================================================================
+  candidate-build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: "Windows-x64"
+            platform: win
+            arch_filter: "x86_64"
+          - os: macos-15-intel
+            label: "macOS-Intel-x64"
+            platform: mac
+            arch_filter: "x86_64"
+          - os: macos-15
+            label: "macOS-AppleSilicon-arm64"
+            platform: mac
+            arch_filter: "arm64"
+          - os: ubuntu-latest
+            label: "Linux-x64"
+            platform: linux
+            arch_filter: "x86_64"
+
+    # 通过 workflow_dispatch input 动态控制哪些平台跳过
+    # 各 FFmpeg 下载步骤用 if: 检查 matrix.arch_filter 来区分目标架构
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 完整历史，便于记录 commit
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/api/requirements.txt
+
+      # --------------------------------------------------------------
+      # 记录 Runner 实际架构信息
+      # --------------------------------------------------------------
+      - name: Record Runner info
+        shell: bash
+        run: |
+          ARCH=$(uname -m 2>/dev/null || echo "x86_64")
+          echo "runner_os=${{ runner.os }}" >> "$GITHUB_ENV"
+          echo "runner_arch=$ARCH" >> "$GITHUB_ENV"
+          echo "runner_label=${{ matrix.label }}" >> "$GITHUB_ENV"
+          echo "git_commit=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "git_short=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          # 架构一致性断言
+          if [ "${{ matrix.platform }}" = "mac" ] && [ "${{ matrix.arch_filter }}" = "arm64" ] && [ "$ARCH" != "arm64" ]; then
+            echo "::error::macOS ARM64 Runner 架构不符：实际=$ARCH，期望=arm64"
+            exit 1
+          fi
+          if [ "${{ matrix.platform }}" = "mac" ] && [ "${{ matrix.arch_filter }}" = "x86_64" ] && [ "$ARCH" != "x86_64" ]; then
+            echo "::error::macOS Intel x64 Runner 架构不符：实际=$ARCH，期望=x86_64"
+            exit 1
+          fi
+          echo "Runner: ${{ runner.os }} $ARCH, commit=$git_commit, label=${{ matrix.label }}"
+
+      # --------------------------------------------------------------
+      # FFmpeg 下载与 SHA-256 校验
+      # 每个平台有独立步骤，arch_filter 决定下载哪组资产
+      # --------------------------------------------------------------
+
+      # Windows x64 — Gyan.dev 9.0.2
+      - name: Download & verify FFmpeg (Windows x64)
+        if: matrix.platform == 'win'
+        shell: bash
+        run: |
+          FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
+          mkdir -p "$FFMPEG_DIR"
+          TMP="$RUNNER_TEMP"
+          echo "Downloading Gyan.dev FFmpeg 9.0.2 essentials..."
+          curl -sL -o "$TMP/ffmpeg-essentials.zip" \
+            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          EXPECTED="60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
+          ACTUAL=$(sha256sum "$TMP/ffmpeg-essentials.zip" | awk '{print $1}')
+          echo "Expected: $EXPECTED"
+          echo "Actual:   $ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::FFmpeg SHA-256 不匹配！"
+            exit 1
+          fi
+          unzip -q "$TMP/ffmpeg-essentials.zip" -d "$TMP/ffmpeg-bin"
+          # Gyan.dev 包结构：ffmpeg-<ver>-<arch>/bin/ffmpeg.exe
+          BIN_DIR=$(find "$TMP/ffmpeg-bin" -type f -name "ffmpeg.exe" -exec dirname {} \; | head -1)
+          if [ -z "$BIN_DIR" ]; then
+            echo "::error::未在 ZIP 中找到 ffmpeg.exe"
+            exit 1
+          fi
+          cp "$BIN_DIR/ffmpeg.exe"  "$FFMPEG_DIR/ffmpeg.exe"
+          cp "$BIN_DIR/ffprobe.exe" "$FFMPEG_DIR/ffprobe.exe"
+          echo "=== FFmpeg buildconf ==="
+          "$FFMPEG_DIR/ffmpeg.exe" -buildconf 2>&1 | tee "$GITHUB_WORKSPACE/ffmpeg-bin-buildconf.txt"
+          echo "=== FFprobe version ==="
+          "$FFMPEG_DIR/ffprobe.exe" -version | head -1
+
+      # macOS x64 — Martin Riedl 9.0.2（Intel）
+      - name: Download & verify FFmpeg (macOS x64)
+        if: matrix.platform == 'mac' && matrix.arch_filter == 'x86_64'
+        shell: bash
+        run: |
+          FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
+          mkdir -p "$FFMPEG_DIR"
+          TMP="$RUNNER_TEMP"
+          echo "Downloading Martin Riedl FFmpeg 9.0.2 macOS x64..."
+          curl -sL -o "$TMP/ffmpeg.zip" \
+            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip"
+          F_EXP="7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4"
+          F_ACT=$(shasum -a 256 "$TMP/ffmpeg.zip" | awk '{print $1}')
+          echo "FFmpeg  expected: $F_EXP"
+          echo "FFmpeg  actual:   $F_ACT"
+          if [ "$F_ACT" != "$F_EXP" ]; then echo "::error::FFmpeg SHA-256 mismatch"; exit 1; fi
+          curl -sL -o "$TMP/ffprobe.zip" \
+            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip"
+          P_EXP="2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd"
+          P_ACT=$(shasum -a 256 "$TMP/ffprobe.zip" | awk '{print $1}')
+          echo "FFprobe expected: $P_EXP"
+          echo "FFprobe actual:   $P_ACT"
+          if [ "$P_ACT" != "$P_EXP" ]; then echo "::error::FFprobe SHA-256 mismatch"; exit 1; fi
+          # Martin Riedl macOS ZIP 结构：直接含 ffmpeg / ffprobe 可执行文件
+          unzip -q "$TMP/ffmpeg.zip"  -d "$TMP/ffmpeg-bin"
+          unzip -q "$TMP/ffprobe.zip" -d "$TMP/ffprobe-bin"
+          install -m 0755 "$TMP/ffmpeg-bin/ffmpeg"  "$FFMPEG_DIR/ffmpeg"
+          install -m 0755 "$TMP/ffprobe-bin/ffprobe" "$FFMPEG_DIR/ffprobe"
+          echo "=== FFprobe version ==="
+          "$FFMPEG_DIR/ffprobe" -version | head -1
+          echo "=== FFmpeg buildconf ==="
+          "$FFMPEG_DIR/ffmpeg" -buildconf 2>&1 | tee "$GITHUB_WORKSPACE/ffmpeg-bin-buildconf.txt"
+
+      # macOS arm64 — Martin Riedl 9.0.2（Apple Silicon）
+      - name: Download & verify FFmpeg (macOS arm64)
+        if: matrix.platform == 'mac' && matrix.arch_filter == 'arm64'
+        shell: bash
+        run: |
+          FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
+          mkdir -p "$FFMPEG_DIR"
+          TMP="$RUNNER_TEMP"
+          echo "Downloading Martin Riedl FFmpeg 9.0.2 macOS arm64..."
+          curl -sL -o "$TMP/ffmpeg.zip" \
+            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
+          F_EXP="c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
+          F_ACT=$(shasum -a 256 "$TMP/ffmpeg.zip" | awk '{print $1}')
+          echo "FFmpeg  expected: $F_EXP"
+          echo "FFmpeg  actual:   $F_ACT"
+          if [ "$F_ACT" != "$F_EXP" ]; then echo "::error::FFmpeg SHA-256 mismatch"; exit 1; fi
+          curl -sL -o "$TMP/ffprobe.zip" \
+            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip"
+          P_EXP="fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6"
+          P_ACT=$(shasum -a 256 "$TMP/ffprobe.zip" | awk '{print $1}')
+          echo "FFprobe expected: $P_EXP"
+          echo "FFprobe actual:   $P_ACT"
+          if [ "$P_ACT" != "$P_EXP" ]; then echo "::error::FFprobe SHA-256 mismatch"; exit 1; fi
+          unzip -q "$TMP/ffmpeg.zip"  -d "$TMP/ffmpeg-bin"
+          unzip -q "$TMP/ffprobe.zip" -d "$TMP/ffprobe-bin"
+          install -m 0755 "$TMP/ffmpeg-bin/ffmpeg"  "$FFMPEG_DIR/ffmpeg"
+          install -m 0755 "$TMP/ffprobe-bin/ffprobe" "$FFMPEG_DIR/ffprobe"
+          echo "=== FFprobe version ==="
+          "$FFMPEG_DIR/ffprobe" -version | head -1
+          echo "=== FFmpeg buildconf ==="
+          "$FFMPEG_DIR/ffmpeg" -buildconf 2>&1 | tee "$GITHUB_WORKSPACE/ffmpeg-bin-buildconf.txt"
+
+      # Linux x64 — Martin Riedl 9.0.2
+      - name: Download & verify FFmpeg (Linux x64)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
+          mkdir -p "$FFMPEG_DIR"
+          TMP="$RUNNER_TEMP"
+          echo "Downloading Martin Riedl FFmpeg 9.0.2 Linux x64..."
+          curl -sL -o "$TMP/ffmpeg.zip" \
+            "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffmpeg.zip"
+          F_EXP="fa8ecf4abbd290d98f7d188b8649cc6b391ae209a98452be955a15aab1909d7f"
+          F_ACT=$(sha256sum "$TMP/ffmpeg.zip" | awk '{print $1}')
+          echo "FFmpeg  expected: $F_EXP"
+          echo "FFmpeg  actual:   $F_ACT"
+          if [ "$F_ACT" != "$F_EXP" ]; then echo "::error::FFmpeg SHA-256 mismatch"; exit 1; fi
+          curl -sL -o "$TMP/ffprobe.zip" \
+            "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffprobe.zip"
+          P_EXP="3f428c49070be3d24ec338602b76d412e401ffcb8a5641ef0e729181a232fc32"
+          P_ACT=$(sha256sum "$TMP/ffprobe.zip" | awk '{print $1}')
+          echo "FFprobe expected: $P_EXP"
+          echo "FFprobe actual:   $P_ACT"
+          if [ "$P_ACT" != "$P_EXP" ]; then echo "::error::FFprobe SHA-256 mismatch"; exit 1; fi
+          mkdir -p "$TMP/ffmpeg-bin" "$TMP/ffprobe-bin"
+          unzip -q "$TMP/ffmpeg.zip"  -d "$TMP/ffmpeg-bin"
+          unzip -q "$TMP/ffprobe.zip" -d "$TMP/ffprobe-bin"
+          install -m 0755 "$TMP/ffmpeg-bin/ffmpeg"  "$FFMPEG_DIR/ffmpeg"
+          install -m 0755 "$TMP/ffprobe-bin/ffprobe" "$FFMPEG_DIR/ffprobe"
+          echo "=== FFprobe version ==="
+          "$FFMPEG_DIR/ffprobe" -version | head -1
+          echo "=== FFmpeg buildconf ==="
+          "$FFMPEG_DIR/ffmpeg" -buildconf 2>&1 | tee "$GITHUB_WORKSPACE/ffmpeg-bin-buildconf.txt"
+
+      # --------------------------------------------------------------
+      # 安装依赖
+      # --------------------------------------------------------------
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        working-directory: services/api
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      # --------------------------------------------------------------
+      # 构建（依赖顺序：web → electron → PyInstaller）
+      # --------------------------------------------------------------
+      - name: Build web assets
+        run: npm run build:web
+
+      - name: Build Electron desktop (TypeScript)
+        run: npm run build:desktop
+
+      - name: Build standalone server (PyInstaller)
+        working-directory: services/api
+        run: python -m PyInstaller --clean --noconfirm server.spec
+
+      # --------------------------------------------------------------
+      # 媒体自检（打包前，验证 FFmpeg 实际可用）
+      # --------------------------------------------------------------
+      - name: Media self-check (pre-packaging)
+        shell: bash
+        run: |
+          set -e
+          # 定位 FFmpeg（Windows 带 .exe 后缀）
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            FFMPEG="$GITHUB_WORKSPACE/services/api/ffmpeg-bin/ffmpeg.exe"
+            FFPROBE="$GITHUB_WORKSPACE/services/api/ffmpeg-bin/ffprobe.exe"
+          else
+            FFMPEG="$GITHUB_WORKSPACE/services/api/ffmpeg-bin/ffmpeg"
+            FFPROBE="$GITHUB_WORKSPACE/services/api/ffmpeg-bin/ffprobe"
+          fi
+
+          echo "=== FFmpeg version ==="
+          "$FFMPEG" -version | head -1
+
+          echo "=== FFprobe version ==="
+          "$FFPROBE" -version | head -1
+
+          # 生成测试视频（3s, 320x240, h264+aac）
+          TEST_DIR="$GITHUB_WORKSPACE/tests-ffmpeg-selfcheck"
+          mkdir -p "$TEST_DIR"
+          echo "=== Generating test video ==="
+          "$FFMPEG" -y -f lavfi -i "testsrc=duration=3:size=320x240:rate=25" \
+                    -f lavfi -i "sine=frequency=440:duration=3" \
+                    -c:v libx264 -c:a aac -shortest "$TEST_DIR/test-input.mp4" 2>&1 | tail -5
+
+          echo "=== FFprobe stream info (test-input.mp4) ==="
+          "$FFPROBE" -v error -show_format -show_streams "$TEST_DIR/test-input.mp4" 2>&1 | head -30
+
+          echo "=== FFmpeg re-encode to test-output.mp4 ==="
+          "$FFMPEG" -y -i "$TEST_DIR/test-input.mp4" \
+                    -c:v libx264 -c:a aac "$TEST_DIR/test-output.mp4" 2>&1 | tail -5
+
+          OUT_SIZE=$(stat -f%z "$TEST_DIR/test-output.mp4" 2>/dev/null || stat -c%s "$TEST_DIR/test-output.mp4")
+          echo "=== Output size: $OUT_SIZE bytes ==="
+          if [ "$OUT_SIZE" -lt 1000 ]; then
+            echo "::error::输出文件过小（<1000 字节），FFmpeg 可能未正确执行"
+            exit 1
+          fi
+
+          echo "=== FFprobe re-read output ==="
+          "$FFPROBE" -v error -show_format "$TEST_DIR/test-output.mp4" 2>&1 | head -5
+
+      # --------------------------------------------------------------
+      # electron-builder 打包（--publish never 确保不发布）
+      # --------------------------------------------------------------
+      - name: Package desktop app (electron-builder)
+        working-directory: apps/desktop
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+
+      # --------------------------------------------------------------
+      # 记录制品信息
+      # --------------------------------------------------------------
+      - name: Record artifact info
+        shell: bash
+        run: |
+          REL="$GITHUB_WORKSPACE/apps/desktop/release"
+          echo "=== Build artifacts ==="
+          if [ -d "$REL" ]; then
+            find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) -printf "%p %s\n" 2>/dev/null \
+              || find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) -exec ls -lh {} \;
+            echo ""
+            echo "=== Artifact SHA-256 ==="
+            find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) \
+              | while read f; do
+                  hash=$(sha256sum "$f" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$f" | awk '{print $1}')
+                  echo "$(basename "$f")  $hash"
+                done
+          else
+            echo "警告：release 目录不存在"
+          fi
+
+      # --------------------------------------------------------------
+      # 验证 VC_FFMPEG / VC_FFPROBE 路径在打包后有效
+      # --------------------------------------------------------------
+      - name: Verify bundled FFmpeg paths in resources
+        shell: bash
+        run: |
+          echo "=== Verifying FFmpeg in electron-builder resources ==="
+          # electron-builder 的 extraResources 会把 ffmpeg/ffprobe 复制到 resources/server/
+          # 在 CI 环境中检查 dist 资源目录是否包含预期文件
+          DIST_RES="$GITHUB_WORKSPACE/apps/desktop/dist/server"
+          if [ -d "$DIST_RES" ]; then
+            echo "Resources dir: $DIST_RES"
+            ls -la "$DIST_RES" 2>/dev/null
+          fi
+          # 也检查 electron-builder 输出目录中的 resources
+          REL="$GITHUB_WORKSPACE/apps/desktop/release"
+          echo ""
+          echo "=== Release dir ==="
+          ls -la "$REL" 2>/dev/null || echo "(release dir not found)"
+
+      # --------------------------------------------------------------
+      # 上传候选制品（仅 Actions artifact，不创建 GitHub Release）
+      # --------------------------------------------------------------
+      - name: Upload candidate artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ matrix.label }}
+          path: |
+            apps/desktop/release/
+            ffmpeg-bin-buildconf.txt
+            tests-ffmpeg-selfcheck/
+          retention-days: 30
+
+      # --------------------------------------------------------------
+      # 失败诊断
+      # --------------------------------------------------------------
+      - name: Save diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "=== Failure diagnostics ==="
+          echo "Runner:    ${{ runner.os }}"
+          echo "Arch:      $runner_arch"
+          echo "Commit:    $git_commit"
+          echo "Matrix:    ${{ matrix.label }}"
+          echo "Step:      $(cat "$GITHUB_STEP_SUMMARY" 2>/dev/null | head -5 || true)"
+          echo ""
+          echo "=== release dir ==="
+          ls -la "$GITHUB_WORKSPACE/apps/desktop/release/" 2>/dev/null || echo "(no release dir)"
+          echo ""
+          echo "=== ffmpeg-bin dir ==="
+          ls -la "$GITHUB_WORKSPACE/services/api/ffmpeg-bin/" 2>/dev/null || echo "(no ffmpeg-bin)"
+          echo ""
+          echo "=== buildconf (if generated) ==="
+          cat "$GITHUB_WORKSPACE/ffmpeg-bin-buildconf.txt" 2>/dev/null | head -40 || echo "(no buildconf file)"
+
+  # ==================================================================
+  # 汇总 Job（不阻塞其他 job，仅生成报告）
+  # ==================================================================
+  summary:
+    name: "Candidate Summary"
+    needs: candidate-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate summary
+        run: |
+          {
+            echo "# RA-15 候选构建汇总"
+            echo ""
+            echo "- **Commit**: $(git rev-parse HEAD)"
+            echo "- **Date**: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "## 各平台构建状态"
+            echo ""
+            echo "各 job 状态请查看上方 Actions 运行记录。"
+            echo ""
+            echo "## 制品说明"
+            echo ""
+            echo "各平台候选安装包通过 GitHub Actions artifact 上传（保留 30 天）。"
+            echo "artifact 名称格式：candidate-<PlatformLabel>"
+            echo ""
+            echo "包含文件："
+            echo "- apps/desktop/release/ 下的安装包（.exe / .dmg / .AppImage / .deb）"
+            echo "- ffmpeg-bin-buildconf.txt（各平台 FFmpeg 编译配置）"
+            echo "- tests-ffmpeg-selfcheck/（媒体自检生成的测试视频）"
+            echo ""
+            echo "## 人工安装验收步骤"
+            echo ""
+            echo "1. 在对应平台机器上下载对应 artifact"
+            echo "2. 解压 / 安装"
+            echo "3. 确认 resources/server/ 中包含 vns-server、ffmpeg、ffprobe"
+            echo "4. 启动应用，验证后端健康检查和视频探测功能"
+            echo "5. 记录验收结果至 data/acceptance/report.md"
+          } > "$GITHUB_WORKSPACE/candidate-summary.md"
+          cat "$GITHUB_WORKSPACE/candidate-summary.md"
+
+      - name: Upload summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-summary
+          path: candidate-summary.md
+          retention-days: 30

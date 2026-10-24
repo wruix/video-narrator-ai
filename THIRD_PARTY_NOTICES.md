@@ -7,24 +7,42 @@
 
 ## 运行时依赖（由用户自行安装）
 
-### FFmpeg / FFprobe
+### FFmpeg / FFprobe（随包分发）
 
 - 项目主页：https://ffmpeg.org/
-- 许可：LGPL-2.1+ 或 GPL-2+，取决于构建配置
-- 本项目的使用方式：以子进程方式调用**用户自行安装**的 `ffmpeg` / `ffprobe`，不链接其代码
+- 本地验证的二进制版本：n8.1.3-20-gc8de997cb1-20261021（Windows x64，static build，来自 gyan.dev 构建）
+- 构建配置（来自 `-buildconf`）：`--enable-gpl` 已启用，arch=x86_64，target-os=mingw32，交叉编译器 x86_64-w64-mingw32-gcc
+- 启用的 GPL 组件示例：`--enable-libx264 --enable-libx265 --enable-libxvid --enable-libxavs2 --enable-libsvtav1 --enable-librav1e --enable-libaom --enable-libdav1d --enable-libvmaf --enable-libzvbi --enable-libsrt --enable-libvpl --enable-libopenh264 --enable-ffnvcodec --enable-cuda-llvm` 等
+- 启用的 LGPL 组件示例：`--enable-libmp3lame --enable-libopus --enable-libtheora --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libass --enable-libfreetype --enable-libfontconfig` 等
+- **许可证判定**：由于构建时启用了 `--enable-gpl`，并链接了 x264、libx265 等 GPL 授权的第三方库，该 FFmpeg 构建整体适用 **GPL-2.0+**（而非单纯 LGPL）。随包分发时必须：
+  1. 附带 `COPYING.GPLv3`（或对应 GPL 版本文本）；
+  2. 提供源代码获取方式（FFmpeg 源码及所使用第三方库的源码）；
+  3. 遵守 GPL 对整体发行物的传染性要求；
+- 本项目的使用方式：以子进程方式调用 `ffmpeg` / `ffprobe`，**不链接**其代码，但随包分发二进制本身仍需遵循上述 GPL 义务。
+- 未来如果切换为 LGPL-only 构建（禁用 `--enable-gpl` 及所有 GPL 库），则可改为附带 `COPYING.LGPLv3` 并允许用户替换该库。
 
-**如果你的发行版附带 FFmpeg 二进制**，请根据实际使用的构建：
+### 各平台资产来源与锁定状态（RA-14 核实）
 
-- LGPL 构建：需附带 `COPYING.LGPLv3`，并允许用户替换该库；
-- GPL 构建：需附带 `COPYING.GPLv3`，且整体发行物需符合 GPL 要求；
-- 启用 `--enable-gpl` 的构建通常涉及 x264、libx265 等 GPL 组件。
+| 平台 | 来源 | 版本 | SHA-256 | 状态 |
+| --- | --- | --- | --- | --- |
+| Windows x64 | [Gyan.dev](https://www.gyan.dev/ffmpeg/builds/) | 9.0.2 | `60f46726...fa2047ba` | ✅ 已锁定 |
+| macOS x64 | [Martin Riedl](https://ffmpeg.martin-riedl.de/) | 9.0.2 | `7c6b4125...e47cacd4` | ✅ 已锁定（来源确认，本地无法下载验证） |
+| macOS arm64 | [Martin Riedl](https://ffmpeg.martin-riedl.de/) | 9.0.2 | `c8ed4c4e...4492d924` | ✅ 已锁定（来源确认，本地无法下载验证） |
+| Linux x64 | [Martin Riedl](https://ffmpeg.martin-riedl.de/) | 9.0.2 | `fa8ecf4a...5aab1909d7f` | ✅ 已锁定（来源确认，本地无法下载验证） |
 
-常用静态构建来源：
+完整 SHA-256 及下载 URL 见 `config/ffmpeg-assets-lock.md`。
 
-| 来源 | 许可 | 说明 |
-| --- | --- | --- |
-| [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | GPL / LGPL | Windows / Linux 静态构建 |
-| [gyan.dev/ffmpeg](https://www.gyan.dev/ffmpeg/builds/) | GPL / LGPL | Windows 静态构建 |
+**各平台许可证义务**：
+
+| 平台 | 来源 | 许可证判定 | 备注 |
+| --- | --- | --- | --- |
+| Windows x64 | Gyan.dev 9.0.2 | GPL-3.0（已确认） | `-buildconf` 显示 `--enable-gpl`，含 libx264/libx265 等 GPL 库 |
+| macOS x64 | Martin Riedl 9.0.2 | GPL（待 `-buildconf` 确认） | 官网列出 x264、x265、aom、dav1d 等外部库；已签名和公证 |
+| macOS arm64 | Martin Riedl 9.0.2 | GPL（待 `-buildconf` 确认） | 同上，Apple Silicon 原生构建 |
+| Linux x64 | Martin Riedl 9.0.2 | GPL（待 `-buildconf` 确认） | 同上 |
+
+> **注意**：Martin Riedl 构建在官网声明含 x264、x265 等 GPL 编码库，大概率适用 GPL。
+> 各平台实际许可证需下载后执行 `-buildconf` 确认，目前仅有 Windows 已完成该审核。
 
 ### Python
 

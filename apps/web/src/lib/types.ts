@@ -111,7 +111,9 @@ export interface Project {
   language: string;
   aspect: string;
   analysis_model: string;
+  analysis_model_name: string;
   script_model: string;
+  script_model_name: string;
   asr_provider: string;
   tts_provider: string;
   voice_id: string;

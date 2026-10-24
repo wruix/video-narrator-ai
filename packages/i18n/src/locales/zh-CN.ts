@@ -86,6 +86,7 @@ export const zhCN = {
     title: "② 模型与创作设置",
     desc: "不同模型擅长的东西不同：Gemini 擅长整段视频理解，千问与豆包擅长中文对白理解，OpenAI 擅长文案二次创作。随时可以切换并对比结果。",
     analysisModel: "视频分析模型",
+    modelName: "具体模型",
     scriptModel: "文案优化模型（二次创作）",
     scriptModelNone: "不优化（直接使用分析结果）",
     asr: "语音识别（理解原声对白）",

@@ -29,6 +29,10 @@ app = FastAPI(
     description="Multi-model AI video narration workstation",
 )
 
+# Ollama 本地模型：与 OpenAI 兼容 provider 并存，走 /api/chat 原生协议
+from ai_providers import VISION_PROVIDERS, TEXT_PROVIDERS  # noqa: E402
+from .services import ollama_provider as _ollama  # noqa: E402
+
 # CORS：默认允许同源访问；部署到公网时建议在 .env 里收紧
 _cors_origins = [
     o.strip() for o in (os.getenv("VC_CORS_ORIGINS") or "").split(",") if o.strip()
@@ -49,9 +53,26 @@ app.middleware("http")(auth_middleware)
 async def on_startup() -> None:
     ensure_dirs()
     init_db()
+    # 自动发现系统代理（Windows 代理客户端等），否则模型 API 会连接超时
+    from .proxy import apply_proxy
+
+    apply_proxy()
     manager.attach_loop(asyncio.get_running_loop())
     manager.recover_interrupted()
+    # Ollama 本地模型：与包里的 OpenAI 兼容 provider 并存，走 /api/chat 原生协议
+    from .services import ollama_provider as _ollama  # noqa: E402
+
+    VISION_PROVIDERS["ollama"] = _ollama.OllamaProvider()
+    TEXT_PROVIDERS["ollama"] = _ollama.OllamaProvider()
     logger.info("%s v%s 已启动", APP_NAME, APP_VERSION)
+
+
+@app.get(f"{API_PREFIX}/proxy")
+def proxy_status():
+    """当前代理状态（用于排查「连不上模型服务」）。"""
+    from .proxy import proxy_status as _status
+
+    return _status()
 
 
 @app.exception_handler(Exception)

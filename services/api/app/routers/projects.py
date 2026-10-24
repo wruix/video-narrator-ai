@@ -108,7 +108,9 @@ class ProjectUpdate(BaseModel):
     language: str | None = None
     aspect: str | None = None
     analysis_model: str | None = None
+    analysis_model_name: str | None = None
     script_model: str | None = None
+    script_model_name: str | None = None
     asr_provider: str | None = None
     tts_provider: str | None = None
     voice_id: str | None = None
@@ -359,6 +361,8 @@ async def start_analysis(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="请先上传视频")
     if manager.is_running(project_id):
         raise HTTPException(status_code=409, detail="当前项目已有任务在运行")
+    # 先结束本请求的读事务，避免它与后台任务写入争抢 SQLite 写锁
+    db.commit()
     job = manager.start_analysis(project_id)
     return job_to_dict(job)
 
@@ -388,6 +392,8 @@ async def start_render(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="请先完成视频分析")
     if manager.is_running(project_id):
         raise HTTPException(status_code=409, detail="当前项目已有任务在运行")
+    # 先结束本请求的读事务，避免它与后台任务写入争抢 SQLite 写锁
+    db.commit()
     job = manager.start_render(project_id)
     return job_to_dict(job)
 

@@ -11,12 +11,19 @@ files:
   - package.json
   - "!**/*.map"
 
-# 随包携带的本地后端（由 CI 用 PyInstaller 打出后放进 resources/server）
+# 随包携带的资源（由 CI 准备后放进 resources/）
+# 1) PyInstaller 打出的独立后端可执行文件（services/api/dist/vns-server.exe，只含后端，不含 FFmpeg）
+# 2) FFmpeg/FFprobe 二进制（CI 从审核来源下载到 services/api/ffmpeg-bin/，作为独立资源分发，不与 PyInstaller 产物耦合，避免重复嵌入）
 extraResources:
-  - from: ../api/dist/server
+  - from: ../api/dist
     to: server
     filter:
-      - "**/*"
+      - "vns-server*"
+  - from: ../api/ffmpeg-bin
+    to: server
+    filter:
+      - "ffmpeg*"
+      - "ffprobe*"
 
 asar: true
 

@@ -85,7 +85,9 @@ class Project(Base):
     language = Column(String(16), default="zh-CN")
     aspect = Column(String(16), default="original")
     analysis_model = Column(String(64), default="gemini")
+    analysis_model_name = Column(String(128), default="")
     script_model = Column(String(64), default="openai")
+    script_model_name = Column(String(128), default="")
     asr_provider = Column(String(64), default="")
     tts_provider = Column(String(64), default="edge")
     voice_id = Column(String(128), default="zh-CN-XiaoxiaoNeural")
@@ -202,6 +204,18 @@ class UsageRecord(Base):
 def init_db() -> None:
     Base.metadata.create_all(engine)
 
+    # 增量升级：新增模型名字段，兼容旧数据库
+    with engine.connect() as conn:
+        for sql in (
+            "ALTER TABLE projects ADD COLUMN analysis_model_name VARCHAR(128) DEFAULT ''",
+            "ALTER TABLE projects ADD COLUMN script_model_name VARCHAR(128) DEFAULT ''",
+        ):
+            try:
+                conn.execute(__import__("sqlalchemy").text(sql))
+            except Exception:  # noqa: BLE001 - 列已存在则忽略
+                pass
+        conn.commit()
+
 
 def session_scope() -> Session:
     return SessionLocal()
@@ -247,7 +261,9 @@ def project_to_dict(p: Project, include_shots: bool = True) -> dict:
         "language": p.language,
         "aspect": p.aspect,
         "analysis_model": p.analysis_model,
+        "analysis_model_name": p.analysis_model_name or "",
         "script_model": p.script_model,
+        "script_model_name": p.script_model_name or "",
         "asr_provider": p.asr_provider or "",
         "tts_provider": p.tts_provider,
         "voice_id": p.voice_id,

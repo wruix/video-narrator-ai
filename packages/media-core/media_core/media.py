@@ -12,30 +12,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import BIN
+from .config import BIN, MediaError, ffmpeg_bin, ffprobe_bin
 from .types import FrameSample
-
-
-class MediaError(RuntimeError):
-    pass
-
-
-def ffmpeg_bin() -> str:
-    exe = BIN.resolve("ffmpeg")
-    if not exe:
-        raise MediaError(
-            "未找到 ffmpeg。请安装 FFmpeg 并加入 PATH，或设置环境变量 VC_FFMPEG 指向可执行文件。"
-        )
-    return exe
-
-
-def ffprobe_bin() -> str:
-    exe = BIN.resolve("ffprobe")
-    if not exe:
-        raise MediaError(
-            "未找到 ffprobe。请安装 FFmpeg 并加入 PATH，或设置环境变量 VC_FFPROBE 指向可执行文件。"
-        )
-    return exe
 
 
 async def run(cmd: list[str], timeout: float = 3600.0) -> tuple[int, str, str]:
