@@ -168,16 +168,54 @@ check(
     "grep -Eq '^[0-9a-f]{64}$'" in win_block,
 )
 
-# ---- 9d. app-builder-bin 预检步骤存在且缺失即失败（RA-23）
+# ---- 9d. app-builder-bin 诊断（RA-24：预检非致命 + 构建后 always() 对比）
+def _step_by_name(prefix: str):
+    for s in job["steps"]:
+        if isinstance(s, dict) and str(s.get("name", "")).startswith(prefix):
+            return s
+    return None
+
 check(
-    "Preflight check app-builder-bin 步骤存在",
-    "Preflight check app-builder-bin" in text
-    and "require('app-builder-bin').appBuilderPath" in text,
+    "Preflight check app-builder-bin 步骤存在（read-only）",
+    "Preflight check app-builder-bin (read-only)" in text,
 )
 check(
-    "预检在二进制缺失/不可启动时 exit 1",
-    len(re.findall(r"app-builder 可执行文件不存在[\s\S]{0,200}?exit 1", text)) >= 1
-    and len(re.findall(r"app-builder 无法启动[\s\S]{0,120}?exit 1", text)) >= 1,
+    "前后诊断均使用 builder-util 自身解析上下文（与打包消费的同一 appBuilderPath）",
+    text.count("require.resolve('builder-util/out/util.js')") >= 2
+    and text.count(".appBuilderPath") >= 2,
+    f"builder-util 解析 {text.count(chr(39) + 'builder-util/out/util.js' + chr(39))} 次",
+)
+_pre_i0 = text.find("- name: Preflight check app-builder-bin")
+_pre_i1 = text.find("- name: Package desktop app")
+check(
+    "预检为只读非致命（块内无 exit 1），真实失败保留在打包步骤",
+    -1 < _pre_i0 < _pre_i1 and "exit 1" not in text[_pre_i0:_pre_i1],
+)
+_post = _step_by_name("Post-build app-builder diagnostics")
+check(
+    "构建后诊断步骤存在且 if: always()",
+    isinstance(_post, dict) and _post.get("if") == "always()" and _post.get("shell") == "bash",
+    f"实际: {(_post or {}).get('if') if isinstance(_post, dict) else None}",
+)
+
+# ---- 9e. Shell 约束（RA-24：Windows 默认 shell 是 pwsh，Bash 语法必须显式声明）
+_pkg = _step_by_name("Package desktop app")
+check(
+    "Package desktop app 显式声明 shell: bash",
+    isinstance(_pkg, dict) and _pkg.get("shell") == "bash",
+    f"实际: {(_pkg or {}).get('shell') if isinstance(_pkg, dict) else None}",
+)
+_set_e_no_bash = [
+    s.get("name", f"step{i}")
+    for i, s in enumerate(job["steps"], 1)
+    if isinstance(s, dict) and "run" in s
+    and "set -e" in (s.get("run") or "")
+    and s.get("shell") != "bash"
+]
+check(
+    "所有含 set -e 的 run 步骤均显式 shell: bash",
+    not _set_e_no_bash,
+    f"缺失声明: {_set_e_no_bash}",
 )
 
 # ---- 10. 哈希校验失败即退出

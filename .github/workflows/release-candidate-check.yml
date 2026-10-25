@@ -320,56 +320,72 @@ jobs:
           "$FFPROBE" -v error -show_format "$TEST_DIR/test-output.mp4" 2>&1 | head -5
 
       # --------------------------------------------------------------
-      # electron-builder 预检（只读）：确认 app-builder-bin 可执行文件真实存在
-      # 根因排查：builder-util/out/util.js 通过 require("app-builder-bin")
-      # 取 index.js 的 appBuilderPath，路径按 process.platform/arch 拼接。
-      # 本步骤在打包前固化证据，缺失即以非零退出，不跳过打包。
+      # electron-builder 预检（只读，非致命）：在 runner 现场固化证据，绝不阻断打包步骤。
+      # 真实失败一律保留在 Package desktop app 步骤本身（保持原始退出码）。
+      # 与打包完全同一解析路径：从 builder-util/out/util.js 出发，按它消费 app-builder-bin 的方式解析。
       # --------------------------------------------------------------
-      - name: Preflight check app-builder-bin
+      - name: Preflight check app-builder-bin (read-only)
         shell: bash
+        working-directory: apps/desktop
         run: |
-          set -e
-          echo "=== node / process arch ==="
-          node -e "console.log('platform=%s arch=%s execPath=%s', process.platform, process.arch, process.execPath)"
+          echo "=== runtime environment ==="
+          node -e "console.log('process.platform=%s process.arch=%s execPath=%s', process.platform, process.arch, process.execPath)"
+          echo "uname: $(uname -s) $(uname -m)"
+          echo "node: $(command -v node)"
+          echo "cwd: $(pwd)"
           echo ""
-          echo "=== app-builder-bin resolution ==="
-          AB_DIR=$(node -e "console.log(require('path').dirname(require.resolve('app-builder-bin/package.json')))")
-          AB_VER=$(node -e "console.log(require('app-builder-bin/package.json').version)")
-          echo "package dir: $AB_DIR"
-          echo "package version: $AB_VER"
-          echo ""
-          echo "shell uname -m: $(uname -m)"
-          echo ""
-          echo "=== 运行时解析的二进制路径（require('app-builder-bin').appBuilderPath，与打包时 builder-util 完全同一解析） ==="
-          AB_BIN=$(node -e "console.log(require('app-builder-bin').appBuilderPath)")
-          echo "resolved: $AB_BIN"
-          if [ ! -f "$AB_BIN" ]; then
-            echo "::error::app-builder 可执行文件不存在: $AB_BIN"
-            echo "--- mac/linux/win 目录实际内容 ---"
-            ls -la "$AB_DIR/mac" "$AB_DIR/linux" "$AB_DIR/win" 2>/dev/null || true
-            exit 1
+          echo "=== electron-builder toolchain (resolved from current cwd) ==="
+          node -e "console.log('electron-builder :', require('electron-builder/package.json').version)" 2>/dev/null || echo "electron-builder : UNRESOLVABLE"
+          node -e "console.log('app-builder-lib  :', require('app-builder-lib/package.json').version)" 2>/dev/null || echo "app-builder-lib  : UNRESOLVABLE"
+          BU=$(node -e "console.log(require.resolve('builder-util/out/util.js'))" 2>/dev/null)
+          echo "builder-util entry: ${BU:-UNRESOLVABLE}"
+          ABB_PKG=""
+          AB_BIN=""
+          ABB_DIR=""
+          if [ -n "$BU" ]; then
+            node -e "console.log('builder-util     :', require('builder-util/package.json').version)" 2>/dev/null || echo "builder-util     : UNRESOLVABLE"
+            ABB_PKG=$(node -e "console.log(require.resolve('app-builder-bin/package.json',{paths:[require('path').dirname(process.argv[1])]}))" "$BU" 2>/dev/null)
+            AB_BIN=$(node -e "console.log(require(require.resolve('app-builder-bin',{paths:[require('path').dirname(process.argv[1])]})).appBuilderPath)" "$BU" 2>/dev/null)
+            ABB_DIR=$(node -e "console.log(require('path').dirname(process.argv[1]))" "$ABB_PKG" 2>/dev/null)
           fi
-          if [ ! -x "$AB_BIN" ]; then
-            echo "::error::app-builder 文件存在但缺少可执行权限: $AB_BIN"
-            ls -la "$AB_BIN"
-            exit 1
-          fi
-          ls -la "$AB_BIN"
+          echo "app-builder-bin package: ${ABB_PKG:-UNRESOLVABLE}"
+          node -e "console.log('app-builder-bin ver :', require(process.argv[1]).version)" "$ABB_PKG" 2>/dev/null || echo "app-builder-bin ver : UNRESOLVABLE"
+          echo "electron installed ver: $(node -e "console.log(require('electron/package.json').version)" 2>/dev/null || echo UNRESOLVABLE)"
+          echo "path electron-builder actually consumes: ${AB_BIN:-UNRESOLVABLE}"
           echo ""
-          echo "=== 受控只读启动检查（仅启动进程，不执行任何构建） ==="
-          set +e
-          "$AB_BIN" --help >/dev/null 2>&1
-          rc=$?
-          set -e
-          if [ "$rc" = "127" ] || [ "$rc" = "126" ]; then
-            echo "::error::app-builder 无法启动 (rc=$rc, 127=ENOENT/126=EPERM)"
-            exit 1
-          fi
-          # app-builder 无 --help 时返回 usage 非零退出码属正常，只要不是 126/127 即说明进程可执行
-          echo "app-builder 进程可启动 (rc=$rc): OK"
+          echo "=== snapshot: state before build ==="
+          OUT="$RUNNER_TEMP/app-builder-bin.before"
+          {
+            echo "ab_bin=${AB_BIN:-UNRESOLVABLE}"
+            if [ -n "$AB_BIN" ] && [ -e "$AB_BIN" ]; then
+              echo "exists=yes"
+              echo "exec_bit=$([ -x "$AB_BIN" ] && echo yes || echo no)"
+              echo "size=$(wc -c < "$AB_BIN")"
+              ls -la "$AB_BIN"
+              if command -v file >/dev/null 2>&1; then echo "file-type: $(file -b "$AB_BIN")"; else echo "file-type: (file tool unavailable)"; fi
+              if [ "$(uname -s)" = "Darwin" ]; then
+                if command -v otool >/dev/null 2>&1; then echo "--- otool -L ---"; otool -L "$AB_BIN" 2>&1 | head -20; else echo "otool: unavailable"; fi
+              fi
+              if [ "$(uname -s)" = "Linux" ]; then
+                if command -v ldd >/dev/null 2>&1; then echo "--- ldd ---"; ldd "$AB_BIN" 2>&1 | head -20; else echo "ldd: unavailable"; fi
+                if command -v readelf >/dev/null 2>&1; then echo "--- readelf -lW ---"; readelf -lW "$AB_BIN" 2>&1 | head -30; else echo "readelf: unavailable"; fi
+              fi
+              "$AB_BIN" --help >"$OUT.help" 2>&1
+              echo "standalone_help_rc=$?"
+              echo "--- help output (first 1200 bytes) ---"
+              head -c 1200 "$OUT.help"
+            else
+              echo "exists=no"
+              if [ -n "$ABB_DIR" ]; then
+                ls -la "$ABB_DIR/mac" "$ABB_DIR/linux" "$ABB_DIR/win" 2>/dev/null
+                find "$ABB_DIR" -type f 2>/dev/null | sort
+              fi
+            fi
+          } > "$OUT" 2>&1
+          cat "$OUT"
           echo ""
-          echo "=== electron 版本解析（验证 electron 版本锁定修复在 CI 安装后生效） ==="
-          node -e "console.log('electron installed version:', require('electron/package.json').version)"
+          echo "(preflight is read-only non-fatal diagnostics only; true failures are preserved in the Package step itself)"
+          exit 0
 
       # --------------------------------------------------------------
       # electron-builder 打包（显式目标 :架构 + --publish never 确保不发布）
@@ -383,11 +399,79 @@ jobs:
       #   Linux   → AppImage:x64 deb:x64
       # --------------------------------------------------------------
       - name: Package desktop app (electron-builder)
+        shell: bash
         working-directory: apps/desktop
         run: |
           set -e
           # shellcheck disable=SC2086
           npx electron-builder --${{ matrix.platform }} ${{ matrix.eb_target }} --publish never
+
+      # --------------------------------------------------------------
+      # 构建后诊断（if: always()，只读，非致命）：
+      # 用与构建完全相同的解析方式重查同一路径，并与构建前快照 diff。
+      # 本步骤自身绝不失败，不改变打包步骤的退出码结论。
+      #   - 构建前存在可启动、构建后消失  → 调查构建期间的依赖安装行为
+      #   - 始终存在但无法启动            → 调查文件格式/架构/系统依赖
+      #   - 前后解析路径不同              → 调查运行时包解析与工作目录
+      # --------------------------------------------------------------
+      - name: Post-build app-builder diagnostics (read-only)
+        if: always()
+        shell: bash
+        working-directory: apps/desktop
+        run: |
+          echo "=== snapshot: state after packaging step (if: always()) ==="
+          BU=$(node -e "console.log(require.resolve('builder-util/out/util.js'))" 2>/dev/null)
+          AB_BIN=""
+          ABB_PKG=""
+          ABB_DIR=""
+          if [ -n "$BU" ]; then
+            ABB_PKG=$(node -e "console.log(require.resolve('app-builder-bin/package.json',{paths:[require('path').dirname(process.argv[1])]}))" "$BU" 2>/dev/null)
+            AB_BIN=$(node -e "console.log(require(require.resolve('app-builder-bin',{paths:[require('path').dirname(process.argv[1])]})).appBuilderPath)" "$BU" 2>/dev/null)
+            ABB_DIR=$(node -e "console.log(require('path').dirname(process.argv[1]))" "$ABB_PKG" 2>/dev/null)
+          fi
+          OUT="$RUNNER_TEMP/app-builder-bin.after"
+          {
+            echo "ab_bin=${AB_BIN:-UNRESOLVABLE}"
+            if [ -n "$AB_BIN" ] && [ -e "$AB_BIN" ]; then
+              echo "exists=yes"
+              echo "exec_bit=$([ -x "$AB_BIN" ] && echo yes || echo no)"
+              echo "size=$(wc -c < "$AB_BIN")"
+              ls -la "$AB_BIN"
+              if command -v file >/dev/null 2>&1; then echo "file-type: $(file -b "$AB_BIN")"; else echo "file-type: (file tool unavailable)"; fi
+              if [ "$(uname -s)" = "Darwin" ]; then
+                if command -v otool >/dev/null 2>&1; then echo "--- otool -L ---"; otool -L "$AB_BIN" 2>&1 | head -20; else echo "otool: unavailable"; fi
+              fi
+              if [ "$(uname -s)" = "Linux" ]; then
+                if command -v ldd >/dev/null 2>&1; then echo "--- ldd ---"; ldd "$AB_BIN" 2>&1 | head -20; else echo "ldd: unavailable"; fi
+                if command -v readelf >/dev/null 2>&1; then echo "--- readelf -lW ---"; readelf -lW "$AB_BIN" 2>&1 | head -30; else echo "readelf: unavailable"; fi
+              fi
+              "$AB_BIN" --help >"$OUT.help" 2>&1
+              echo "standalone_help_rc=$?"
+              echo "--- help output (first 1200 bytes) ---"
+              head -c 1200 "$OUT.help"
+            else
+              echo "exists=no"
+              if [ -n "$ABB_DIR" ]; then
+                ls -la "$ABB_DIR/mac" "$ABB_DIR/linux" "$ABB_DIR/win" 2>/dev/null
+                find "$ABB_DIR" -type f 2>/dev/null | sort
+              fi
+            fi
+          } > "$OUT" 2>&1
+          cat "$OUT"
+          echo ""
+          echo "=== before/after comparison ==="
+          if [ -f "$RUNNER_TEMP/app-builder-bin.before" ]; then
+            if diff -u "$RUNNER_TEMP/app-builder-bin.before" "$OUT"; then
+              echo "RESULT: no state change before vs after build"
+            else
+              echo "RESULT: app-builder-bin state CHANGED during build (see diff above)"
+            fi
+          else
+            echo "RESULT: before-build snapshot missing (preflight did not run), comparison skipped"
+          fi
+          echo ""
+          echo "(read-only diagnostics only; this step never changes the build verdict)"
+          exit 0
 
       # --------------------------------------------------------------
       # 记录制品信息
