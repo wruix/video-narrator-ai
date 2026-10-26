@@ -604,9 +604,15 @@ jobs:
           # vns-server* / ffmpeg* / ffprobe* 任一缺失即 exit 1。
           # electron-builder 将 extraResources 复制到：
           #   Windows/Linux: <out>/resources/server ; macOS: <*.app>/Contents/Resources/server
+          # RA-28 修正（Run 109157582270 实证）：Windows 上 job-level env "runner_os"（小写名）
+          # 与内置 RUNNER_OS（大写名）在 bash 里是两个独立变量（bash 大小写敏感），
+          # 但 Windows 进程环境的大小写不敏感会把 runner_os 写入顶掉 RUNNER_OS，导致
+          # $RUNNER_OS 展开为空。改用 job 已定义的 runner_os（小写名、取值首字母大写：
+          # Windows/macOS/Linux，与本 runner.os 完全一致），分支标签同步大写，
+          # 且 4 平台（含 macOS 的 "macOS" 标签）全部命中同一变量同一大小写。
           REL="$GITHUB_WORKSPACE/apps/desktop/release"
           SERVER_RES=""
-          case "$RUNNER_OS" in
+          case "$runner_os" in
             Windows) SERVER_RES="$REL/win-unpacked/resources/server" ;;
             Linux)   SERVER_RES="$REL/linux-unpacked/resources/server" ;;
             macOS)

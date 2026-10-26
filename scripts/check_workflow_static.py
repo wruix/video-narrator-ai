@@ -371,8 +371,8 @@ check(
     "win-unpacked" in _s20_run and "linux-unpacked" in _s20_run and 'Contents/Resources/server' in _s20_run,
 )
 check(
-    "第 20 步按 RUNNER_OS 分支定位资源目录",
-    'case "$RUNNER_OS"' in _s20_run,
+    "第 20 步按 runner_os 分支定位资源目录（Windows 上 $RUNNER_OS 被同名小写 runner_os 顶掉；改用小写名跨平台一致命中）",
+    'case "$runner_os"' in _s20_run,
 )
 
 # ---- 结果
