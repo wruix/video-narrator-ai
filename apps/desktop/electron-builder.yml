@@ -2,6 +2,18 @@ appId: ai.videonarrator.desktop
 productName: VideoNarrator AI
 copyright: Copyright © 2026 VideoNarrator AI Contributors
 
+# RA-26 最小修复：打包期 electron-builder 默认在 app 目标目录执行
+# "installing production dependencies"（npm install --production / rebuild，见
+# app-builder-lib 25.1.8 packager.js installAppDependencies → yarn.js）。
+# 本仓库为 npm workspaces 布局，构建工具链（electron / electron-builder /
+# builder-util / app-builder-bin）全部位于根 node_modules 的 devDependencies；
+# 该生产安装在 apps/desktop 内触发时会把这批 dev 依赖从根 node_modules 剪除，
+# electron-builder 进程随后 spawn 已被删除的 app-builder 即报 ENOENT
+# （Run #4 三平台实证 + 本地 npm install --omit=dev --dry-run 复现 remove app-builder-bin）。
+# 本应用零运行时依赖（dependencies 为空）、无原生模块需要安装或重建，
+# npmRebuild: false 直接跳过该步骤（源码路径 "skipped dependencies rebuild"），不影响产物。
+npmRebuild: false
+
 directories:
   output: release
   buildResources: build

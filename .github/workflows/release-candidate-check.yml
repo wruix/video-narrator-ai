@@ -328,6 +328,12 @@ jobs:
         shell: bash
         working-directory: apps/desktop
         run: |
+          # RA-26 错误隔离：GitHub Actions 对 bash 步骤默认追加 -e -o pipefail。
+          # 预检是只读取证，任何工具失败（含 ldd 对静态 ELF 的预期非零、
+          # 管道 SIGPIPE、快照内命令非零）都不得终止本步骤、跳过 Package。
+          # Package 步骤自身的 set -e 与失败语义完全不受影响。
+          set +e
+          set +o pipefail
           echo "=== runtime environment ==="
           node -e "console.log('process.platform=%s process.arch=%s execPath=%s', process.platform, process.arch, process.execPath)"
           echo "uname: $(uname -s) $(uname -m)"
@@ -355,6 +361,10 @@ jobs:
           echo ""
           echo "=== snapshot: state before build ==="
           OUT="$RUNNER_TEMP/app-builder-bin.before"
+          TOOL_OT="$RUNNER_TEMP/app-builder-bin.otool.out"
+          TOOL_LD="$RUNNER_TEMP/app-builder-bin.ldd.out"
+          TOOL_RE="$RUNNER_TEMP/app-builder-bin.readelf.out"
+          TOOL_HP="$RUNNER_TEMP/app-builder-bin.help.out"
           {
             echo "ab_bin=${AB_BIN:-UNRESOLVABLE}"
             if [ -n "$AB_BIN" ] && [ -e "$AB_BIN" ]; then
@@ -364,16 +374,37 @@ jobs:
               ls -la "$AB_BIN"
               if command -v file >/dev/null 2>&1; then echo "file-type: $(file -b "$AB_BIN")"; else echo "file-type: (file tool unavailable)"; fi
               if [ "$(uname -s)" = "Darwin" ]; then
-                if command -v otool >/dev/null 2>&1; then echo "--- otool -L ---"; otool -L "$AB_BIN" 2>&1 | head -20; else echo "otool: unavailable"; fi
+                if command -v otool >/dev/null 2>&1; then
+                  # RA-26：工具输出先落盘再截取，避免 "| head" 在 -o pipefail 下被 SIGPIPE 判失败
+                  otool -L "$AB_BIN" >"$TOOL_OT" 2>&1
+                  echo "otool_rc=$?"
+                  head -20 "$TOOL_OT"
+                else
+                  echo "otool: unavailable"
+                fi
               fi
               if [ "$(uname -s)" = "Linux" ]; then
-                if command -v ldd >/dev/null 2>&1; then echo "--- ldd ---"; ldd "$AB_BIN" 2>&1 | head -20; else echo "ldd: unavailable"; fi
-                if command -v readelf >/dev/null 2>&1; then echo "--- readelf -lW ---"; readelf -lW "$AB_BIN" 2>&1 | head -30; else echo "readelf: unavailable"; fi
+                if command -v ldd >/dev/null 2>&1; then
+                  # RA-26：静态链接 ELF 上 ldd 返回非零属预期（"not a dynamic executable"），
+                  # 记录返回码而不是让 pipefail 杀死诊断
+                  ldd "$AB_BIN" >"$TOOL_LD" 2>&1
+                  echo "ldd_rc=$? (non-zero expected for statically linked binaries)"
+                  head -20 "$TOOL_LD"
+                else
+                  echo "ldd: unavailable"
+                fi
+                if command -v readelf >/dev/null 2>&1; then
+                  readelf -lW "$AB_BIN" >"$TOOL_RE" 2>&1
+                  echo "readelf_rc=$?"
+                  head -30 "$TOOL_RE"
+                else
+                  echo "readelf: unavailable"
+                fi
               fi
-              "$AB_BIN" --help >"$OUT.help" 2>&1
+              "$AB_BIN" --help >"$TOOL_HP" 2>&1
               echo "standalone_help_rc=$?"
               echo "--- help output (first 1200 bytes) ---"
-              head -c 1200 "$OUT.help"
+              head -c 1200 "$TOOL_HP"
             else
               echo "exists=no"
               if [ -n "$ABB_DIR" ]; then
@@ -419,6 +450,10 @@ jobs:
         shell: bash
         working-directory: apps/desktop
         run: |
+          # RA-26 错误隔离：同预检，set +e / set +o pipefail 让任何诊断命令失败
+          # 只被记录、不改变步骤退出码；本步骤绝不覆盖 Package 的结论。
+          set +e
+          set +o pipefail
           echo "=== snapshot: state after packaging step (if: always()) ==="
           BU=$(node -e "console.log(require.resolve('builder-util/out/util.js'))" 2>/dev/null)
           AB_BIN=""
@@ -429,29 +464,72 @@ jobs:
             AB_BIN=$(node -e "console.log(require(require.resolve('app-builder-bin',{paths:[require('path').dirname(process.argv[1])]})).appBuilderPath)" "$BU" 2>/dev/null)
             ABB_DIR=$(node -e "console.log(require('path').dirname(process.argv[1]))" "$ABB_PKG" 2>/dev/null)
           fi
+          BEFORE="$RUNNER_TEMP/app-builder-bin.before"
+          # RA-26：打包期 npm 生产安装可能剪除工具链（RA-25B 实证），打包后解析可能
+          # 失败。此时回读构建前快照记录的字面路径，对该路径做只读事后复查，
+          # 保证 "构建后文件是否存在" 不依赖工具链本身是否还解析得出来。
+          RESOLUTION_MODE="resolve"
+          EFFECTIVE="$AB_BIN"
+          if [ -z "$EFFECTIVE" ]; then
+            if [ -f "$BEFORE" ]; then
+              RECALL_BIN=$(sed -n 's/^ab_bin=//p' "$BEFORE" | head -1)
+              if [ -n "$RECALL_BIN" ] && [ "$RECALL_BIN" != "UNRESOLVABLE" ]; then
+                EFFECTIVE="$RECALL_BIN"
+                RESOLUTION_MODE="recall-from-before-snapshot (post-build toolchain resolution failed)"
+              fi
+            fi
+          fi
           OUT="$RUNNER_TEMP/app-builder-bin.after"
+          TOOL_OT="$RUNNER_TEMP/app-builder-bin.otool.after.out"
+          TOOL_LD="$RUNNER_TEMP/app-builder-bin.ldd.after.out"
+          TOOL_RE="$RUNNER_TEMP/app-builder-bin.readelf.after.out"
+          TOOL_HP="$RUNNER_TEMP/app-builder-bin.help.after.out"
           {
-            echo "ab_bin=${AB_BIN:-UNRESOLVABLE}"
-            if [ -n "$AB_BIN" ] && [ -e "$AB_BIN" ]; then
+            echo "resolution_mode=$RESOLUTION_MODE"
+            echo "ab_bin=${EFFECTIVE:-UNRESOLVABLE}"
+            if [ -n "$EFFECTIVE" ] && [ -e "$EFFECTIVE" ]; then
               echo "exists=yes"
-              echo "exec_bit=$([ -x "$AB_BIN" ] && echo yes || echo no)"
-              echo "size=$(wc -c < "$AB_BIN")"
-              ls -la "$AB_BIN"
-              if command -v file >/dev/null 2>&1; then echo "file-type: $(file -b "$AB_BIN")"; else echo "file-type: (file tool unavailable)"; fi
+              echo "exec_bit=$([ -x "$EFFECTIVE" ] && echo yes || echo no)"
+              echo "size=$(wc -c < "$EFFECTIVE")"
+              ls -la "$EFFECTIVE"
+              if command -v file >/dev/null 2>&1; then echo "file-type: $(file -b "$EFFECTIVE")"; else echo "file-type: (file tool unavailable)"; fi
               if [ "$(uname -s)" = "Darwin" ]; then
-                if command -v otool >/dev/null 2>&1; then echo "--- otool -L ---"; otool -L "$AB_BIN" 2>&1 | head -20; else echo "otool: unavailable"; fi
+                if command -v otool >/dev/null 2>&1; then
+                  otool -L "$EFFECTIVE" >"$TOOL_OT" 2>&1
+                  echo "otool_rc=$?"
+                  head -20 "$TOOL_OT"
+                else
+                  echo "otool: unavailable"
+                fi
               fi
               if [ "$(uname -s)" = "Linux" ]; then
-                if command -v ldd >/dev/null 2>&1; then echo "--- ldd ---"; ldd "$AB_BIN" 2>&1 | head -20; else echo "ldd: unavailable"; fi
-                if command -v readelf >/dev/null 2>&1; then echo "--- readelf -lW ---"; readelf -lW "$AB_BIN" 2>&1 | head -30; else echo "readelf: unavailable"; fi
+                if command -v ldd >/dev/null 2>&1; then
+                  ldd "$EFFECTIVE" >"$TOOL_LD" 2>&1
+                  echo "ldd_rc=$? (non-zero expected for statically linked binaries)"
+                  head -20 "$TOOL_LD"
+                else
+                  echo "ldd: unavailable"
+                fi
+                if command -v readelf >/dev/null 2>&1; then
+                  readelf -lW "$EFFECTIVE" >"$TOOL_RE" 2>&1
+                  echo "readelf_rc=$?"
+                  head -30 "$TOOL_RE"
+                else
+                  echo "readelf: unavailable"
+                fi
               fi
-              "$AB_BIN" --help >"$OUT.help" 2>&1
+              "$EFFECTIVE" --help >"$TOOL_HP" 2>&1
               echo "standalone_help_rc=$?"
               echo "--- help output (first 1200 bytes) ---"
-              head -c 1200 "$OUT.help"
+              head -c 1200 "$TOOL_HP"
             else
               echo "exists=no"
+              if [ -n "$EFFECTIVE" ]; then
+                echo "--- target dir listing ---"
+                ls -la "$(dirname "$EFFECTIVE")" 2>/dev/null || echo "(target dir missing or unreadable)"
+              fi
               if [ -n "$ABB_DIR" ]; then
+                echo "--- app-builder-bin package dir listing ---"
                 ls -la "$ABB_DIR/mac" "$ABB_DIR/linux" "$ABB_DIR/win" 2>/dev/null
                 find "$ABB_DIR" -type f 2>/dev/null | sort
               fi
@@ -460,14 +538,18 @@ jobs:
           cat "$OUT"
           echo ""
           echo "=== before/after comparison ==="
-          if [ -f "$RUNNER_TEMP/app-builder-bin.before" ]; then
-            if diff -u "$RUNNER_TEMP/app-builder-bin.before" "$OUT"; then
-              echo "RESULT: no state change before vs after build"
-            else
-              echo "RESULT: app-builder-bin state CHANGED during build (see diff above)"
-            fi
-          else
+          if [ ! -f "$BEFORE" ]; then
             echo "RESULT: before-build snapshot missing (preflight did not run), comparison skipped"
+            echo "RESULT_CLASS: BEFORE_SNAPSHOT_MISSING"
+          elif [ ! -f "$OUT" ]; then
+            echo "RESULT: after-build snapshot missing (diagnostic command failure) — file state Not Proven by comparison"
+            echo "RESULT_CLASS: AFTER_SNAPSHOT_MISSING"
+          elif diff -u "$BEFORE" "$OUT" >/dev/null 2>&1; then
+            echo "RESULT: no state change before vs after build"
+            echo "RESULT_CLASS: SAME"
+          else
+            echo "RESULT: app-builder-bin state CHANGED during build (see diff above); judge from exists=/size=/file-type=/standalone_help_rc transitions"
+            echo "RESULT_CLASS: CHANGED"
           fi
           echo ""
           echo "(read-only diagnostics only; this step never changes the build verdict)"

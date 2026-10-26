@@ -11,6 +11,8 @@
 8. 无 v* tag 触发、无 release 创建步骤、无 secrets 输出
 9. artifact 名称不含敏感路径
 10. 打包命令使用 --publish never
+11. RA-26：npmRebuild:false 生效配置 + app-builder 诊断步骤错误隔离
+    （预检/构建后显式 set +e + 管道落盘，ldd 静态 ELF 非零不终止诊断）
 """
 import re
 import sys
@@ -216,6 +218,76 @@ check(
     "所有含 set -e 的 run 步骤均显式 shell: bash",
     not _set_e_no_bash,
     f"缺失声明: {_set_e_no_bash}",
+)
+
+# ---- 9f. RA-26：npmRebuild 修复与诊断步骤错误隔离
+EB_CFG_PATH = ROOT / "apps/desktop/electron-builder.yml"
+eb_cfg = EB_CFG_PATH.read_text(encoding="utf-8")
+check(
+    "实际生效配置 apps/desktop/electron-builder.yml 声明 npmRebuild: false（RA-25B 根因 A 修复）",
+    re.search(r"(?m)^\s*npmRebuild:\s*false\s*$", eb_cfg) is not None,
+)
+check(
+    "electron-builder.yml 中 npmRebuild 仅作为顶层键声明一次（无冲突/重复定义；解析语义 = false）",
+    len(re.findall(r"(?m)^\s*npmRebuild:", eb_cfg)) == 1
+    and (yaml.safe_load(eb_cfg) or {}).get("npmRebuild") is False,
+)
+
+
+def _code_lines(run_text: str) -> str:
+    """剥离 run 块中的注释行，只对可执行代码行做断言。"""
+    return "\n".join(l for l in run_text.splitlines() if not l.lstrip().startswith("#"))
+
+
+_pkg_step = _step_by_name("Package desktop app")
+pkg_run = str(_pkg_step.get("run", "")) if isinstance(_pkg_step, dict) else ""
+_pre_run = str((_step_by_name("Preflight check app-builder-bin") or {}).get("run", ""))
+_post_run = str((_post or {}).get("run", ""))
+
+for label, run_text in (("预检", _pre_run), ("构建后诊断", _post_run)):
+    check(
+        f"{label}步骤以显式 set +e / set +o pipefail 隔离 runner 默认 errexit（诊断绝不能提前失败）",
+        "set +e" in run_text and "set +o pipefail" in run_text,
+    )
+    check(
+        f"{label}步骤代码未被改写为 set -e（保持非致命 / 只读取证定位；注释行不影响断言）",
+        "set -e" not in _code_lines(run_text)
+        and not re.search(r"(?m)^\s*set\s+-e\b", run_text),
+    )
+
+check(
+    "Package 步骤保留 set -e（诊断逻辑不得吞掉真实构建失败）",
+    "set -e" in pkg_run,
+)
+# ldd/otool/readelf/help 输出必须先落盘再截取（避免 "| head" 在 -o pipefail 下 SIGPIPE 误报），
+# 且 ldd 的非零返回码必须被记录而不是终止诊断
+for label, run_text in (("预检", _pre_run), ("构建后诊断", _post_run)):
+    check(
+        f"{label}步骤无 'otool/ldd/readelf ... | head' 管道（先落盘再截取，防 SIGPIPE/pipefail）",
+        not re.search(r'(?:otool|ldd|readelf)[^\n|]*\| head', run_text),
+    )
+    check(
+        f"{label}步骤记录 ldd 返回码（静态 ELF 非零属预期，仅记录不终止）",
+        "ldd_rc=" in run_text,
+    )
+    check(
+        f"{label}步骤记录 standalone --help 返回码",
+        "standalone_help_rc=" in run_text,
+    )
+# 构建后诊断的三态结论区分（文件状态变化 vs 诊断自身失败 vs 无基线）
+check(
+    "构建后诊断 RESULT 三态区分（无基线 / 诊断自失败 / 前后变化 / 不变）",
+    all(k in _post_run for k in (
+        "RESULT_CLASS: BEFORE_SNAPSHOT_MISSING",
+        "RESULT_CLASS: AFTER_SNAPSHOT_MISSING",
+        "RESULT_CLASS: SAME",
+        "RESULT_CLASS: CHANGED",
+    )),
+)
+# 工具链被剪除（打包后解析失败）时，回读构建前快照字面路径复查
+check(
+    "构建后诊断具备回读机制：解析失败时从 before 快照恢复 ENOENT 路径",
+    "sed -n 's/^ab_bin=//p'" in _post_run and "app-builder-bin.before" in _post_run,
 )
 
 # ---- 10. 哈希校验失败即退出
