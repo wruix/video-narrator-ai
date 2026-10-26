@@ -570,7 +570,21 @@ jobs:
             echo "=== Artifact SHA-256 ==="
             find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) \
               | while read f; do
-                  hash=$(sha256sum "$f" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$f" | awk '{print $1}')
+                  # RA-27 修复（Run 109150569887 Windows 第 19 步 exit 127）：
+                  # 1) 哈希一律走 stdin 重定向（"sha256sum < 文件"，bash 打开文件），
+                  #    避开 GNU coreutils 对反斜杠/混合分隔符路径的输出转义面——
+                  #    该 stdin 模式已在第 6 步（Windows FFmpeg 校验）两次 run CI 实证；
+                  # 2) 不再用 "|| shasum" 作乐观回退（shasum 在 Git Bash 不存在 → 127）；
+                  # 3) 两种工具都不可用时输出显式占位标记并继续，绝不吞错提权。
+                  hash=""
+                  if command -v sha256sum >/dev/null 2>&1; then
+                    hash=$(sha256sum < "$f" 2>/dev/null | awk '{print $1}') || hash=""
+                  elif command -v shasum >/dev/null 2>&1; then
+                    hash=$(shasum -a 256 < "$f" 2>/dev/null | awk '{print $1}') || hash=""
+                  fi
+                  if [ -z "$hash" ]; then
+                    hash="(hash unavailable for: $f)"
+                  fi
                   echo "$(basename "$f")  $hash"
                 done
           else
@@ -583,19 +597,41 @@ jobs:
       - name: Verify bundled FFmpeg paths in resources
         shell: bash
         run: |
-          echo "=== Verifying FFmpeg in electron-builder resources ==="
-          # electron-builder 的 extraResources 会把 ffmpeg/ffprobe 复制到 resources/server/
-          # 在 CI 环境中检查 dist 资源目录是否包含预期文件
-          DIST_RES="$GITHUB_WORKSPACE/apps/desktop/dist/server"
-          if [ -d "$DIST_RES" ]; then
-            echo "Resources dir: $DIST_RES"
-            ls -la "$DIST_RES" 2>/dev/null
-          fi
-          # 也检查 electron-builder 输出目录中的 resources
+          echo "=== Verifying bundled FFmpeg/server in resources (hard check) ==="
+          # RA-27 升级（Run 109150569887 实证）：此步骤原版只"列目录"，无任何存在性断言，
+          # 在全部 4 平台 extraResources 断链（file source doesn't exist from=apps/api/*）
+          # 的情况下依然绿灯（macOS 假阴性）。现按平台定位 resources/server 并硬断言：
+          # vns-server* / ffmpeg* / ffprobe* 任一缺失即 exit 1。
+          # electron-builder 将 extraResources 复制到：
+          #   Windows/Linux: <out>/resources/server ; macOS: <*.app>/Contents/Resources/server
           REL="$GITHUB_WORKSPACE/apps/desktop/release"
-          echo ""
-          echo "=== Release dir ==="
-          ls -la "$REL" 2>/dev/null || echo "(release dir not found)"
+          SERVER_RES=""
+          case "$RUNNER_OS" in
+            Windows) SERVER_RES="$REL/win-unpacked/resources/server" ;;
+            Linux)   SERVER_RES="$REL/linux-unpacked/resources/server" ;;
+            macOS)
+              APP_DIR=$(find "$REL" -maxdepth 3 -type d -name "VideoNarrator AI.app" -print -quit 2>/dev/null)
+              if [ -n "$APP_DIR" ]; then SERVER_RES="$APP_DIR/Contents/Resources/server"; fi
+              ;;
+          esac
+          echo "Resources dir: ${SERVER_RES:-(unknown)}"
+          if [ -z "$SERVER_RES" ] || [ ! -d "$SERVER_RES" ]; then
+            echo "##[error]Bundled server/FFmpeg resources directory not found: ${SERVER_RES:-(unknown)}"
+            echo "##[error]提示：检查 apps/desktop/electron-builder.yml 的 extraResources from 路径是否指向 ../../services/api/*"
+            exit 1
+          fi
+          ls -la "$SERVER_RES"
+          missing=""
+          for pat in "vns-server*" "ffmpeg*" "ffprobe*"; do
+            if [ -z "$(find "$SERVER_RES" -maxdepth 1 -name "$pat" -print -quit 2>/dev/null)" ]; then
+              missing="$missing $pat"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "##[error]Missing bundled resource patterns under $SERVER_RES:$missing"
+            exit 1
+          fi
+          echo "OK: server + ffmpeg/ffprobe resources are bundled under $SERVER_RES"
 
       # --------------------------------------------------------------
       # 上传候选制品（仅 Actions artifact，不创建 GitHub Release）

@@ -26,12 +26,15 @@ files:
 # 随包携带的资源（由 CI 准备后放进 resources/）
 # 1) PyInstaller 打出的独立后端可执行文件（services/api/dist/vns-server.exe，只含后端，不含 FFmpeg）
 # 2) FFmpeg/FFprobe 二进制（CI 从审核来源下载到 services/api/ffmpeg-bin/，作为独立资源分发，不与 PyInstaller 产物耦合，避免重复嵌入）
+# RA-27 修复：from 相对 apps/desktop 解析（Run 109150569887 四平台日志实证
+# "file source doesn't exist from=<ws>/apps/api/{dist,ffmpeg-bin}"），
+# ../api/* 曾解析到不存在的 apps/api/*；改为 ../../services/api/* 指向真实产物路径。
 extraResources:
-  - from: ../api/dist
+  - from: ../../services/api/dist
     to: server
     filter:
       - "vns-server*"
-  - from: ../api/ffmpeg-bin
+  - from: ../../services/api/ffmpeg-bin
     to: server
     filter:
       - "ffmpeg*"

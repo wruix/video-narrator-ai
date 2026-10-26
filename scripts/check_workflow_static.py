@@ -13,7 +13,11 @@
 10. 打包命令使用 --publish never
 11. RA-26：npmRebuild:false 生效配置 + app-builder 诊断步骤错误隔离
     （预检/构建后显式 set +e + 管道落盘，ldd 静态 ELF 非零不终止诊断）
+12. RA-27：package.json 元数据（author.email/homepage/repository）、
+    extraResources 指向 services/api 真实产物、第 19 步哈希 stdin 模式无 shasum 乐观回退、
+    第 20 步 bundled 资源硬断言（缺失即 exit 1）
 """
+import json
 import re
 import sys
 from pathlib import Path
@@ -293,6 +297,83 @@ check(
 # ---- 10. 哈希校验失败即退出
 n_hash_exit = len(re.findall(r'SHA-256 (?:不匹配|mismatch)[\s\S]{0,80}?exit 1', text))
 check(f"所有 SHA-256 校验失败路径均 exit 1（找到 {n_hash_exit} 处）", n_hash_exit >= 4, "至少 4 个平台下载步骤")
+
+# ---- 11. RA-27：元数据、extraResources 断链、候选验证强化
+PKG_PATH = ROOT / "apps/desktop/package.json"
+try:
+    pkg_json = json.loads(PKG_PATH.read_text(encoding="utf-8"))
+    _pkg_ok = True
+except (OSError, ValueError) as e:
+    pkg_json = {}
+    _pkg_ok = False
+check("apps/desktop/package.json 可解析", _pkg_ok)
+check(
+    "apps/desktop/package.json author.email 存在（.deb maintainer 来源；FpmTarget 要求）",
+    isinstance(pkg_json.get("author"), dict) and bool(pkg_json["author"].get("email"))
+    and bool(pkg_json["author"].get("name")),
+)
+check(
+    "apps/desktop/package.json homepage 存在（computePackageUrl 第一来源；CI 无 GITHUB_REPOSITORY 支持）",
+    bool(pkg_json.get("homepage")),
+)
+check(
+    "apps/desktop/package.json repository 存在（computePackageUrl 第二来源/repositoryInfo 链）",
+    bool(pkg_json.get("repository")),
+)
+
+try:
+    eb_doc = yaml.safe_load(eb_cfg) or {}
+except yaml.YAMLError:
+    eb_doc = {}
+_eb_res = eb_doc.get("extraResources") or []
+_eb_froms = [r.get("from", "") for r in _eb_res if isinstance(r, dict)]
+check(
+    "extraResources from 全部指向 ../../services/api/*（修复 Run 109150569887 四平台 apps/api/* 断链）",
+    len(_eb_res) == 2 and len(_eb_froms) == 2
+    and all(f.startswith("../../services/api/") for f in _eb_froms),
+    f"实际: {_eb_froms}",
+)
+check(
+    "extraResources 每项 to: server 且 filter 匹配 vns-server/ffmpeg/ffprobe",
+    all(r.get("to") == "server" for r in _eb_res)
+    and any("vns-server*" in (r.get("filter") or []) for r in _eb_res)
+    and any("ffmpeg*" in (r.get("filter") or []) for r in _eb_res)
+    and any("ffprobe*" in (r.get("filter") or []) for r in _eb_res),
+)
+
+_s19 = _step_by_name("Record artifact info")
+_s19_run = str((_s19 or {}).get("run", "")) if isinstance(_s19, dict) else ""
+check(
+    "第 19 步哈希用 stdin 重定向（sha256sum < 文件，RA-23/第 6 步 CI 实证模式）",
+    'sha256sum < "$f"' in _s19_run,
+)
+check(
+    "第 19 步不再依赖 shasum 作乐观回退（Run 109150569887 exit 127 根因）",
+    "|| shasum" not in _code_lines(_s19_run),
+)
+check(
+    "第 19 步哈希不可用时输出显式占位标记（不静默吞错）",
+    "hash unavailable" in _s19_run,
+)
+
+_s20 = _step_by_name("Verify bundled FFmpeg paths in resources")
+_s20_run = str((_s20 or {}).get("run", "")) if isinstance(_s20, dict) else ""
+check(
+    "第 20 步为硬断言（资源缺失 exit 1），不再是只列目录的空验证",
+    "exit 1" in _code_lines(_s20_run),
+)
+check(
+    "第 20 步断言 vns-server*/ffmpeg*/ffprobe* 三类资源存在性",
+    all(p in _s20_run for p in ("vns-server*", "ffmpeg*", "ffprobe*")),
+)
+check(
+    "第 20 步覆盖 Windows/macOS/Linux 三种 resources/server 布局",
+    "win-unpacked" in _s20_run and "linux-unpacked" in _s20_run and 'Contents/Resources/server' in _s20_run,
+)
+check(
+    "第 20 步按 RUNNER_OS 分支定位资源目录",
+    'case "$RUNNER_OS"' in _s20_run,
+)
 
 # ---- 结果
 print("=" * 72)
