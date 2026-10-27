@@ -16,6 +16,9 @@
 12. RA-27：package.json 元数据（author.email/homepage/repository）、
     extraResources 指向 services/api 真实产物、第 19 步哈希 stdin 模式无 shasum 乐观回退、
     第 20 步 bundled 资源硬断言（缺失即 exit 1）
+13. RA-30：第 19 步安全读取（IFS= read -r + EOF 守卫，保留 Windows 反斜杠）、
+    哈希/大小失败即 exit 1（无占位伪成功）、逐文件 wc -c 原始整数字节（替代 ls -lh）；
+    第 20 步 SIZE_BYTES 整数字节输出；回归测试脚本 scripts/tests/test_artifact_evidence.sh
 """
 import json
 import re
@@ -345,15 +348,32 @@ _s19 = _step_by_name("Record artifact info")
 _s19_run = str((_s19 or {}).get("run", "")) if isinstance(_s19, dict) else ""
 check(
     "第 19 步哈希用 stdin 重定向（sha256sum < 文件，RA-23/第 6 步 CI 实证模式）",
-    'sha256sum < "$f"' in _s19_run,
+    'sha256sum < "$fpath"' in _s19_run,
 )
 check(
     "第 19 步不再依赖 shasum 作乐观回退（Run 109150569887 exit 127 根因）",
     "|| shasum" not in _code_lines(_s19_run),
 )
+_s19_code = _code_lines(_s19_run)
 check(
-    "第 19 步哈希不可用时输出显式占位标记（不静默吞错）",
-    "hash unavailable" in _s19_run,
+    "第 19 步用 `while IFS= read -r f || [ -n \"$f\" ]` 读取（F1：反斜杠不被消费、末行无换行不丢记录）",
+    'while IFS= read -r f || [ -n "$f" ]' in _s19_code,
+)
+check(
+    "第 19 步不存在未加 -r 的 while read（F1 根因：Windows 路径反斜杠被 POSIX read 吞掉）",
+    not re.search(r"(?m)^\s*while read\b", _s19_code),
+)
+check(
+    "第 19 步哈希失败即失败：结果须匹配 ^[0-9a-f]{64}$，且不再输出 hash unavailable 占位（RA-30 收紧）",
+    "'^[0-9a-f]{64}$'" in _s19_code and "hash unavailable" not in _s19_code,
+)
+check(
+    "第 19 步输出原始整数字节（wc -c 逐文件），不再回退 ls -lh 人类可读值（F2）",
+    'wc -c < "$fpath"' in _s19_code and "ls -lh" not in _s19_code,
+)
+check(
+    "第 19 步空清单/缺失文件安全失败（exit 1），不产生伪成功",
+    '[ ! -s "$LIST" ]' in _s19_code and "制品缺失" in _s19_code,
 )
 
 _s20 = _step_by_name("Verify bundled FFmpeg paths in resources")
@@ -373,6 +393,28 @@ check(
 check(
     "第 20 步按 runner_os 分支定位资源目录（Windows 上 $RUNNER_OS 被同名小写 runner_os 顶掉；改用小写名跨平台一致命中）",
     'case "$runner_os"' in _s20_run,
+)
+
+_s20_code = _code_lines(_s20_run)
+check(
+    "第 20 步逐项输出 SIZE_BYTES 原始整数字节并校验为整数（F2：vns-server/ffmpeg/ffprobe 均可重复验证）",
+    "SIZE_BYTES" in _s20_code and 'wc -c < "$rpath"' in _s20_code and "'^[0-9]+$'" in _s20_code,
+)
+check(
+    "第 20 步保留资源存在性硬断言与 OK 语义（新增诊断未削弱硬断言/包失败语义）",
+    "Missing bundled resource patterns" in _s20_code
+    and "OK: server + ffmpeg/ffprobe resources are bundled" in _s20_code,
+)
+
+_test_sh = ROOT / "scripts/tests/test_artifact_evidence.sh"
+_test_src = _test_sh.read_text(encoding="utf-8") if _test_sh.is_file() else ""
+check(
+    "RA-30 回归测试脚本存在，且覆盖 F1（read -r / 空格文件名 / 末行无换行 EOF 守卫）与 F2（整数字节）",
+    _test_sh.is_file()
+    and 'while IFS= read -r f || [ -n "$f" ]' in _test_src
+    and "SIZE_BYTES" in _test_src
+    and "GOT_EOL" in _test_src
+    and "has space.dmg" in _test_src,
 )
 
 # ---- 结果

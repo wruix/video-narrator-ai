@@ -564,31 +564,70 @@ jobs:
           REL="$GITHUB_WORKSPACE/apps/desktop/release"
           echo "=== Build artifacts ==="
           if [ -d "$REL" ]; then
-            find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) -printf "%p %s\n" 2>/dev/null \
-              || find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) -exec ls -lh {} \;
+            # RA-30 F2 修复：原 GNU find -printf 在 macOS（BSD find）不支持 → 回退 ls -lh，
+            # 只剩 187M/181M 之类人类可读近似值。现统一逐文件 wc -c 输出原始整数 byte 数。
+            # 清单先落盘再到当前 shell 循环读取（非管道），exit 1 不会被子 shell 吞掉。
+            LIST="$RUNNER_TEMP/artifact-list.txt"
+            find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) -print > "$LIST"
+            if [ ! -s "$LIST" ]; then
+              echo "##[error]release 目录存在但未找到任何候选制品：$REL"
+              exit 1
+            fi
+            while IFS= read -r f || [ -n "$f" ]; do
+              if [ -z "$f" ]; then
+                continue
+              fi
+              fpath="$f"
+              if command -v cygpath >/dev/null 2>&1; then
+                fpath=$(cygpath -u "$f")
+              fi
+              if [ ! -f "$fpath" ]; then
+                echo "##[error]制品缺失：$f"
+                exit 1
+              fi
+              size=$(wc -c < "$fpath" 2>/dev/null | tr -d '[:space:]') || size=""
+              if ! printf '%s' "$size" | grep -Eq '^[0-9]+$'; then
+                echo "##[error]无法读取制品大小（整数字节）：$f"
+                exit 1
+              fi
+              printf '%s %s\n' "$f" "$size"
+            done < "$LIST"
             echo ""
             echo "=== Artifact SHA-256 ==="
-            find "$REL" -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) \
-              | while read f; do
-                  # RA-27 修复（Run 109150569887 Windows 第 19 步 exit 127）：
-                  # 1) 哈希一律走 stdin 重定向（"sha256sum < 文件"，bash 打开文件），
-                  #    避开 GNU coreutils 对反斜杠/混合分隔符路径的输出转义面——
-                  #    该 stdin 模式已在第 6 步（Windows FFmpeg 校验）两次 run CI 实证；
-                  # 2) 不再用 "|| shasum" 作乐观回退（shasum 在 Git Bash 不存在 → 127）；
-                  # 3) 两种工具都不可用时输出显式占位标记并继续，绝不吞错提权。
-                  hash=""
-                  if command -v sha256sum >/dev/null 2>&1; then
-                    hash=$(sha256sum < "$f" 2>/dev/null | awk '{print $1}') || hash=""
-                  elif command -v shasum >/dev/null 2>&1; then
-                    hash=$(shasum -a 256 < "$f" 2>/dev/null | awk '{print $1}') || hash=""
-                  fi
-                  if [ -z "$hash" ]; then
-                    hash="(hash unavailable for: $f)"
-                  fi
-                  echo "$(basename "$f")  $hash"
-                done
+            # RA-30 F1 修复：原 `find … | while read f` 未加 -r，POSIX read 会把 Windows
+            # 路径中的 "\a"、"\" 等当转义序列消费（Run #7 6 个制品全部退化成
+            # "(hash unavailable)"，Run #6 日志 "line 18: D:avideo-…" 可复现）。
+            # 现改为 `while IFS= read -r f || [ -n "$f" ]`：反斜杠原样保留、
+            # 末行无换行符也处理；并从 "$LIST" 读取以便 exit 1 传播。
+            while IFS= read -r f || [ -n "$f" ]; do
+              if [ -z "$f" ]; then
+                continue
+              fi
+              fpath="$f"
+              if command -v cygpath >/dev/null 2>&1; then
+                fpath=$(cygpath -u "$f")
+              fi
+              # RA-27 修复（Run 109150569887 Windows 第 19 步 exit 127）：
+              # 1) 哈希一律走 stdin 重定向（"sha256sum < 文件"，bash 打开文件），
+              #    避开 GNU coreutils 对反斜杠/混合分隔符路径的输出转义面——
+              #    该 stdin 模式已在第 6 步（Windows FFmpeg 校验）两次 run CI 实证；
+              # 2) 不再用 "|| shasum" 作乐观回退（shasum 在 Git Bash 不存在 → 127）。
+              # RA-30 收紧：哈希为空或不是 64 位小写十六进制 → exit 1（取消占位伪成功）。
+              hash=""
+              if command -v sha256sum >/dev/null 2>&1; then
+                hash=$(sha256sum < "$fpath" 2>/dev/null | awk '{print $1}') || hash=""
+              elif command -v shasum >/dev/null 2>&1; then
+                hash=$(shasum -a 256 < "$fpath" 2>/dev/null | awk '{print $1}') || hash=""
+              fi
+              if ! printf '%s' "$hash" | grep -Eq '^[0-9a-f]{64}$'; then
+                echo "##[error]SHA-256 计算失败或结果非法：$f"
+                exit 1
+              fi
+              echo "$(basename "$fpath")  $hash"
+            done < "$LIST"
           else
-            echo "警告：release 目录不存在"
+            echo "##[error]release 目录不存在：$REL"
+            exit 1
           fi
 
       # --------------------------------------------------------------
@@ -637,6 +676,34 @@ jobs:
             echo "##[error]Missing bundled resource patterns under $SERVER_RES:$missing"
             exit 1
           fi
+          # RA-30 F2 修复：逐个输出资源的原始整数 byte 数（wc -c），
+          # 不再依赖 ls 的人类可读值；读取失败或非整数 → exit 1，
+          # 不把空值/零值/近似值当作精确值。原有存在性硬断言保持不变。
+          RES_LIST="$RUNNER_TEMP/resource-list.txt"
+          find "$SERVER_RES" -maxdepth 1 -type f \( -name "vns-server*" -o -name "ffmpeg*" -o -name "ffprobe*" \) -print > "$RES_LIST"
+          if [ ! -s "$RES_LIST" ]; then
+            echo "##[error]No bundled resource files enumerated under $SERVER_RES"
+            exit 1
+          fi
+          while IFS= read -r rf || [ -n "$rf" ]; do
+            if [ -z "$rf" ]; then
+              continue
+            fi
+            rpath="$rf"
+            if command -v cygpath >/dev/null 2>&1; then
+              rpath=$(cygpath -u "$rf")
+            fi
+            if [ ! -f "$rpath" ]; then
+              echo "##[error]Bundled resource missing: $rf"
+              exit 1
+            fi
+            size=$(wc -c < "$rpath" 2>/dev/null | tr -d '[:space:]') || size=""
+            if ! printf '%s' "$size" | grep -Eq '^[0-9]+$'; then
+              echo "##[error]Cannot read exact byte size: $rf"
+              exit 1
+            fi
+            printf 'SIZE_BYTES %s %s\n' "$size" "$rf"
+          done < "$RES_LIST"
           echo "OK: server + ffmpeg/ffprobe resources are bundled under $SERVER_RES"
 
       # --------------------------------------------------------------
