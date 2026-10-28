@@ -227,7 +227,7 @@ class Runner:
             "",
             "| 平台 | Runner | 预期制品 | SHA-256 | 许可证确认 | CI 下载 | 媒体自检 | 安装包 | 安装验收 |",
             "|------|--------|---------|:-------:|:---------:|:------:|:-------:|:-----:|:-------:|",
-            "| Windows x64 | windows-latest | NSIS .exe + portable .exe | ✅ | ✅ | ⚠️ 待CI | ✅ 本地通过 | ⚠️ 待CI | ⚠️ 待CI |",
+            "| Windows x64 | windows-latest | NSIS .exe | ✅ | ✅ | ⚠️ 待CI | ✅ 本地通过 | ⚠️ 待CI | ⚠️ 待CI |",
             "| macOS Intel x64 | macos-15-intel | DMG (x64) + zip | ✅ | ⚠️ 待CI | ⚠️ 待CI | ❌ 无设备 | ⚠️ 待CI | ⚠️ 待CI |",
             "| macOS Apple Silicon arm64 | macos-15 | DMG (arm64) + zip | ✅ | ⚠️ 待CI | ⚠️ 待CI | ❌ 无设备 | ⚠️ 待CI | ⚠️ 待CI |",
             "| Linux x64 | ubuntu-latest | AppImage + deb | ✅ | ⚠️ 待CI | ⚠️ 待CI | ❌ 无设备 | ⚠️ 待CI | ⚠️ 待CI |",

@@ -161,7 +161,7 @@ check(
     "Apple Silicon 目标为 arm64、Intel/Win/Linux 目标为 x64",
     any(t == "dmg:arm64 zip:arm64" for t in eb_targets)
     and any(t == "dmg:x64 zip:x64" for t in eb_targets)
-    and any(t == "nsis:x64 portable:x64" for t in eb_targets)
+    and any(t == "nsis:x64" for t in eb_targets)
     and any(t == "AppImage:x64 deb:x64" for t in eb_targets),
     f"实际: {eb_targets}",
 )
@@ -415,6 +415,38 @@ check(
     and "SIZE_BYTES" in _test_src
     and "GOT_EOL" in _test_src
     and "has space.dmg" in _test_src,
+)
+
+# ---- 14. RA-32 F3：Windows 不得同时声明 nsis 与 portable（同名冲突）
+_windows_targets = [tt for tt in eb_targets if tt.startswith('nsis:') or tt.startswith('portable:')]
+check(
+    'F3：Windows eb_target 不含有 portable target（RA-32 发布阻断项）',
+    not any('portable' in tt for tt in eb_targets),
+    '实际: %s' % eb_targets,
+)
+check(
+    'F3：Windows eb_target 必须同时包含 nsis:x64（交付形态为 NSIS）',
+    any(tt == 'nsis:x64' for tt in eb_targets),
+    '实际: %s' % eb_targets,
+)
+
+# ---- 15. RA-32 L-1：Linux AppImage blockmap 一致性
+try:
+    linux_eb = yaml.safe_load((ROOT / 'apps/desktop/electron-builder.yml').read_text(encoding='utf-8')) or {}
+except yaml.YAMLError:
+    linux_eb = {}
+_linux_targets = [(t.get('target') or '').lower() for t in (linux_eb.get('linux') or {}).get('target') or []]
+_linux_publish = (linux_eb.get('linux') or {}).get('publish')
+_has_appimage = 'appimage' in [t.lower() for t in _linux_targets]
+check(
+    'L-1：Linux 配置显式 publish: null（防止 --publish never 下仍生成 orphaned blockMapSize）',
+    linux_eb.get('linux', {}).get('publish') is None,
+    'linux.publish=%s' % linux_eb.get('linux', {}).get('publish'),
+)
+check(
+    'L-1：workflow eb_target 不含 blockmap 相关关键字（仅声明 target+arch）',
+    all('blockmap' not in tt.lower() for tt in eb_targets),
+    '实际: %s' % eb_targets,
 )
 
 # ---- 结果

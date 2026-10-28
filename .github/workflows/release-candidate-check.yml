@@ -45,7 +45,7 @@ jobs:
             label: "Windows-x64"
             platform: win
             arch_filter: "x86_64"
-            eb_target: "nsis:x64 portable:x64"
+            eb_target: "nsis:x64"
           - os: macos-15-intel
             label: "macOS-Intel-x64"
             platform: mac
@@ -424,7 +424,7 @@ jobs:
       # （见 app-builder-lib/out/targets/targetFactory.js computeArchToTargetNamesMap：
       #  配置文件 target 显式声明 arch 时优先于 CLI 架构开关），
       # 因此这里用 "target:arch" 形式强制单架构目标：
-      #   Windows → nsis:x64 portable:x64
+      #   Windows → nsis:x64
       #   Intel   → dmg:x64 zip:x64
       #   arm64   → dmg:arm64 zip:arm64
       #   Linux   → AppImage:x64 deb:x64
