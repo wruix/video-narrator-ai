@@ -114,27 +114,18 @@ jobs:
         if: matrix.platform == 'win'
         shell: bash
         run: |
+          set -euo pipefail
           FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
           mkdir -p "$FFMPEG_DIR"
           TMP="$RUNNER_TEMP"
           echo "Downloading Gyan.dev FFmpeg 9.0.2 essentials..."
-          curl -sL -o "$TMP/ffmpeg-essentials.zip" \
-            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-          EXPECTED="60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
-          # 使用标准输入重定向：避免 Git Bash 的 GNU sha256sum 对反斜杠路径
-          # ($RUNNER_TEMP) 启用文件名转义，导致哈希字段被粘连前导反斜杠。
-          ACTUAL=$(sha256sum < "$TMP/ffmpeg-essentials.zip" | awk '{print $1}')
-          echo "Expected: $EXPECTED"
-          echo "Actual:   $ACTUAL"
-          # 严格断言：实际值必须恰好是 64 位十六进制（比较前不删除任何字符）
-          if ! printf '%s' "$ACTUAL" | grep -Eq '^[0-9a-f]{64}$'; then
-            echo "::error::FFmpeg SHA-256 格式非法（应为 64 位十六进制）：'$ACTUAL'"
-            exit 1
-          fi
-          if [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "::error::FFmpeg SHA-256 不匹配！"
-            exit 1
-          fi
+          # RA-32: 统一走有上限重试 + 严格 SHA-256 校验；最终失败即 exit 1。
+          # 保留锁定哈希（config/ffmpeg-assets-lock.md），不得跳过校验。
+          bash scripts/ci/fetch_with_retry.sh \
+            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" \
+            "$TMP/ffmpeg-essentials.zip" \
+            "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba" \
+            "Windows FFmpeg essentials"
           unzip -q "$TMP/ffmpeg-essentials.zip" -d "$TMP/ffmpeg-bin"
           # Gyan.dev 包结构：ffmpeg-<ver>-<arch>/bin/ffmpeg.exe
           BIN_DIR=$(find "$TMP/ffmpeg-bin" -type f -name "ffmpeg.exe" -exec dirname {} \; | head -1)
@@ -154,24 +145,23 @@ jobs:
         if: matrix.platform == 'mac' && matrix.arch_filter == 'x86_64'
         shell: bash
         run: |
+          set -euo pipefail
           FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
           mkdir -p "$FFMPEG_DIR"
           TMP="$RUNNER_TEMP"
           echo "Downloading Martin Riedl FFmpeg 9.0.2 macOS x64..."
-          curl -sL -o "$TMP/ffmpeg.zip" \
-            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip"
-          F_EXP="7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4"
-          F_ACT=$(shasum -a 256 "$TMP/ffmpeg.zip" | awk '{print $1}')
-          echo "FFmpeg  expected: $F_EXP"
-          echo "FFmpeg  actual:   $F_ACT"
-          if [ "$F_ACT" != "$F_EXP" ]; then echo "::error::FFmpeg SHA-256 mismatch"; exit 1; fi
-          curl -sL -o "$TMP/ffprobe.zip" \
-            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip"
-          P_EXP="2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd"
-          P_ACT=$(shasum -a 256 "$TMP/ffprobe.zip" | awk '{print $1}')
-          echo "FFprobe expected: $P_EXP"
-          echo "FFprobe actual:   $P_ACT"
-          if [ "$P_ACT" != "$P_EXP" ]; then echo "::error::FFprobe SHA-256 mismatch"; exit 1; fi
+          # RA-32: Run 110200736999 中 ffprobe.zip 无超时挂起约 92 分钟后 curl rc=56。
+          # 统一改为有上限重试 + 连接/整体/低速超时；校验失败最终 exit 1。
+          bash scripts/ci/fetch_with_retry.sh \
+            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip" \
+            "$TMP/ffmpeg.zip" \
+            "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4" \
+            "macOS x64 FFmpeg"
+          bash scripts/ci/fetch_with_retry.sh \
+            "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip" \
+            "$TMP/ffprobe.zip" \
+            "2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd" \
+            "macOS x64 FFprobe"
           # Martin Riedl macOS ZIP 结构：直接含 ffmpeg / ffprobe 可执行文件
           unzip -q "$TMP/ffmpeg.zip"  -d "$TMP/ffmpeg-bin"
           unzip -q "$TMP/ffprobe.zip" -d "$TMP/ffprobe-bin"
@@ -187,24 +177,22 @@ jobs:
         if: matrix.platform == 'mac' && matrix.arch_filter == 'arm64'
         shell: bash
         run: |
+          set -euo pipefail
           FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
           mkdir -p "$FFMPEG_DIR"
           TMP="$RUNNER_TEMP"
           echo "Downloading Martin Riedl FFmpeg 9.0.2 macOS arm64..."
-          curl -sL -o "$TMP/ffmpeg.zip" \
-            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
-          F_EXP="c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
-          F_ACT=$(shasum -a 256 "$TMP/ffmpeg.zip" | awk '{print $1}')
-          echo "FFmpeg  expected: $F_EXP"
-          echo "FFmpeg  actual:   $F_ACT"
-          if [ "$F_ACT" != "$F_EXP" ]; then echo "::error::FFmpeg SHA-256 mismatch"; exit 1; fi
-          curl -sL -o "$TMP/ffprobe.zip" \
-            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip"
-          P_EXP="fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6"
-          P_ACT=$(shasum -a 256 "$TMP/ffprobe.zip" | awk '{print $1}')
-          echo "FFprobe expected: $P_EXP"
-          echo "FFprobe actual:   $P_ACT"
-          if [ "$P_ACT" != "$P_EXP" ]; then echo "::error::FFprobe SHA-256 mismatch"; exit 1; fi
+          # RA-32: 与 macOS x64 相同的重试/超时/严格校验策略。
+          bash scripts/ci/fetch_with_retry.sh \
+            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip" \
+            "$TMP/ffmpeg.zip" \
+            "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924" \
+            "macOS arm64 FFmpeg"
+          bash scripts/ci/fetch_with_retry.sh \
+            "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip" \
+            "$TMP/ffprobe.zip" \
+            "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6" \
+            "macOS arm64 FFprobe"
           unzip -q "$TMP/ffmpeg.zip"  -d "$TMP/ffmpeg-bin"
           unzip -q "$TMP/ffprobe.zip" -d "$TMP/ffprobe-bin"
           install -m 0755 "$TMP/ffmpeg-bin/ffmpeg"  "$FFMPEG_DIR/ffmpeg"
@@ -219,24 +207,22 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         run: |
+          set -euo pipefail
           FFMPEG_DIR="$GITHUB_WORKSPACE/services/api/ffmpeg-bin"
           mkdir -p "$FFMPEG_DIR"
           TMP="$RUNNER_TEMP"
           echo "Downloading Martin Riedl FFmpeg 9.0.2 Linux x64..."
-          curl -sL -o "$TMP/ffmpeg.zip" \
-            "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffmpeg.zip"
-          F_EXP="fa8ecf4abbd290d98f7d188b8649cc6b391ae209a98452be955a15aab1909d7f"
-          F_ACT=$(sha256sum "$TMP/ffmpeg.zip" | awk '{print $1}')
-          echo "FFmpeg  expected: $F_EXP"
-          echo "FFmpeg  actual:   $F_ACT"
-          if [ "$F_ACT" != "$F_EXP" ]; then echo "::error::FFmpeg SHA-256 mismatch"; exit 1; fi
-          curl -sL -o "$TMP/ffprobe.zip" \
-            "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffprobe.zip"
-          P_EXP="3f428c49070be3d24ec338602b76d412e401ffcb8a5641ef0e729181a232fc32"
-          P_ACT=$(sha256sum "$TMP/ffprobe.zip" | awk '{print $1}')
-          echo "FFprobe expected: $P_EXP"
-          echo "FFprobe actual:   $P_ACT"
-          if [ "$P_ACT" != "$P_EXP" ]; then echo "::error::FFprobe SHA-256 mismatch"; exit 1; fi
+          # RA-32: 与 macOS 相同的重试/超时/严格校验策略。
+          bash scripts/ci/fetch_with_retry.sh \
+            "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffmpeg.zip" \
+            "$TMP/ffmpeg.zip" \
+            "fa8ecf4abbd290d98f7d188b8649cc6b391ae209a98452be955a15aab1909d7f" \
+            "Linux x64 FFmpeg"
+          bash scripts/ci/fetch_with_retry.sh \
+            "https://ffmpeg.martin-riedl.de/download/linux/amd64/1789931100_9.0.2/ffprobe.zip" \
+            "$TMP/ffprobe.zip" \
+            "3f428c49070be3d24ec338602b76d412e401ffcb8a5641ef0e729181a232fc32" \
+            "Linux x64 FFprobe"
           mkdir -p "$TMP/ffmpeg-bin" "$TMP/ffprobe-bin"
           unzip -q "$TMP/ffmpeg.zip"  -d "$TMP/ffmpeg-bin"
           unzip -q "$TMP/ffprobe.zip" -d "$TMP/ffprobe-bin"
@@ -685,6 +671,14 @@ jobs:
             echo "##[error]No bundled resource files enumerated under $SERVER_RES"
             exit 1
           fi
+          # RA-32: 产物最小化后不再上传 *-unpacked 目录，改为上传本清单作为
+          # 构建追溯证据（路径 + 精确字节数 + SHA-256），避免丢失资源自检结果。
+          MANIFEST="$GITHUB_WORKSPACE/bundled-resources-manifest.txt"
+          {
+            echo "# RA-32 bundled resources manifest"
+            echo "# commit=$git_commit runner_os=$runner_os"
+            echo "# path<TAB>size_bytes<TAB>sha256"
+          } > "$MANIFEST"
           while IFS= read -r rf || [ -n "$rf" ]; do
             if [ -z "$rf" ]; then
               continue
@@ -702,8 +696,21 @@ jobs:
               echo "##[error]Cannot read exact byte size: $rf"
               exit 1
             fi
+            hash=""
+            if command -v sha256sum >/dev/null 2>&1; then
+              hash=$(sha256sum < "$rpath" 2>/dev/null | awk '{print $1}') || hash=""
+            elif command -v shasum >/dev/null 2>&1; then
+              hash=$(shasum -a 256 < "$rpath" 2>/dev/null | awk '{print $1}') || hash=""
+            fi
+            if ! printf '%s' "$hash" | grep -Eq '^[0-9a-f]{64}$'; then
+              echo "##[error]Cannot compute SHA-256 for bundled resource: $rf"
+              exit 1
+            fi
+            printf '%s\t%s\t%s\n' "$rf" "$size" "$hash" >> "$MANIFEST"
             printf 'SIZE_BYTES %s %s\n' "$size" "$rf"
+            printf 'SHA256 %s %s\n' "$hash" "$rf"
           done < "$RES_LIST"
+          echo "Manifest written: $MANIFEST"
           echo "OK: server + ffmpeg/ffprobe resources are bundled under $SERVER_RES"
 
       # --------------------------------------------------------------
@@ -715,10 +722,23 @@ jobs:
         with:
           name: candidate-${{ matrix.label }}
           path: |
-            apps/desktop/release/
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.dmg.blockmap
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.zip.blockmap
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/latest.yml
+            apps/desktop/release/latest-mac.yml
+            apps/desktop/release/latest-linux.yml
+            apps/desktop/release/builder-debug.yml
             ffmpeg-bin-buildconf.txt
+            bundled-resources-manifest.txt
             tests-ffmpeg-selfcheck/
-          retention-days: 30
+          retention-days: 1
+          if-no-files-found: error
 
       # --------------------------------------------------------------
       # 失败诊断
@@ -769,12 +789,13 @@ jobs:
             echo ""
             echo "## 制品说明"
             echo ""
-            echo "各平台候选安装包通过 GitHub Actions artifact 上传（保留 30 天）。"
+            echo "各平台候选安装包通过 GitHub Actions artifact 上传（保留 1 天，请及时下载）。"
             echo "artifact 名称格式：candidate-<PlatformLabel>"
             echo ""
-            echo "包含文件："
-            echo "- apps/desktop/release/ 下的安装包（.exe / .dmg / .AppImage / .deb）"
+            echo "包含文件（RA-32 最小化清单，不含 *-unpacked 目录）："
+            echo "- apps/desktop/release/ 下的安装包与更新元数据（.exe/.dmg/.zip/.AppImage/.deb、*.blockmap、latest*.yml、builder-debug.yml）"
             echo "- ffmpeg-bin-buildconf.txt（各平台 FFmpeg 编译配置）"
+            echo "- bundled-resources-manifest.txt（内嵌 vns-server/ffmpeg/ffprobe 的路径、字节数、SHA-256）"
             echo "- tests-ffmpeg-selfcheck/（媒体自检生成的测试视频）"
             echo ""
             echo "## 人工安装验收步骤"
@@ -792,4 +813,4 @@ jobs:
         with:
           name: candidate-summary
           path: candidate-summary.md
-          retention-days: 30
+          retention-days: 3

@@ -96,6 +96,7 @@ wf_hashes = set(re.findall(r"(?i)(?:EXPECTED|_EXP|F_EXP|P_EXP)=\"?([0-9a-f]{64})
 # 也匹配 EXPECTED="..." 形式
 wf_hashes |= set(re.findall(r"EXPECTED=\"([0-9a-f]{64})\"", text))
 wf_hashes |= set(re.findall(r"=\s*\"([0-9a-f]{64})\"", text))
+wf_hashes |= set(re.findall(r"(?<![0-9a-f])([0-9a-f]{64})(?![0-9a-f])", text))
 expected_hashes = set(h for h in wf_hashes if h in lock_hashes)
 missing_in_lock = wf_hashes - lock_hashes
 check(
@@ -166,15 +167,60 @@ check(
     f"实际: {eb_targets}",
 )
 
-# ---- 9c. Windows sha256sum 防转义解析（RA-23：反斜杠路径导致哈希粘连前导 '\'）
-win_block = text[text.index("Download & verify FFmpeg (Windows x64)"):text.index("Download & verify FFmpeg (macOS")]
+# ---- 9c. FFmpeg 下载重试与严格校验（RA-32）
+FETCH = ROOT / "scripts/ci/fetch_with_retry.sh"
+fetch_src = FETCH.read_text(encoding="utf-8") if FETCH.is_file() else ""
 check(
-    "Windows 哈希使用 stdin 重定向解析（避免 sha256sum 文件名转义）",
-    'sha256sum < "$TMP/ffmpeg-essentials.zip"' in win_block,
+    "FFmpeg 下载重试脚本存在（RA-32）",
+    FETCH.is_file(),
+    f"missing: {FETCH}",
 )
 check(
-    "Windows 哈希比较前做严格 64 位十六进制断言",
-    "grep -Eq '^[0-9a-f]{64}$'" in win_block,
+    "重试次数有上限（默认 4，硬上限 10）",
+    "FETCH_MAX_ATTEMPTS:-4" in fetch_src
+    and 'while [ "$attempt" -le "$MAX_ATTEMPTS" ]' in fetch_src
+    and '"$MAX_ATTEMPTS" -gt 10' in fetch_src,
+)
+check(
+    "curl 设置连接超时、整体超时与低速中断（避免 92 分钟挂起）",
+    "--connect-timeout" in fetch_src
+    and "--max-time" in fetch_src
+    and "--speed-limit" in fetch_src
+    and "--speed-time" in fetch_src,
+)
+check(
+    "重试采用有上限线性退避",
+    "BACKOFF * attempt" in fetch_src and "sleep" in fetch_src,
+)
+check(
+    "SHA-256 校验使用 stdin 重定向并严格匹配 64 位十六进制（Windows 反斜杠安全）",
+    'sha256sum < "$1"' in fetch_src
+    and 'shasum -a 256 < "$1"' in fetch_src
+    and "'^[0-9a-f]{64}$'" in fetch_src,
+)
+check(
+    "四个平台共 7 个固定资产下载全部走重试脚本（Windows 单包含 ffmpeg+ffprobe）",
+    text.count("bash scripts/ci/fetch_with_retry.sh") == 7,
+    f"实际: {text.count('bash scripts/ci/fetch_with_retry.sh')}",
+)
+check(
+    "下载步骤不再直接使用无超时的 curl -o",
+    not re.search(r"curl -sL -o \"\$TMP/", text),
+)
+check(
+    "下载步骤显式 set -euo pipefail（失败传播不被吞掉）",
+    text.count("set -euo pipefail") >= 4,
+    f"实际: {text.count('set -euo pipefail')}",
+)
+_FETCH_TEST = ROOT / "scripts/ci/test_fetch_retry.sh"
+_fetch_test_src = _FETCH_TEST.read_text(encoding="utf-8") if _FETCH_TEST.is_file() else ""
+check(
+    "RA-32 回归测试覆盖成功/校验失败/缺失源/参数错误/重试上限",
+    _FETCH_TEST.is_file()
+    and "checksum mismatch was masked as success" in _fetch_test_src
+    and "missing source was masked as success" in _fetch_test_src
+    and "invalid expected hash accepted" in _fetch_test_src
+    and "attempt cap enforced" in _fetch_test_src,
 )
 
 # ---- 9d. app-builder-bin 诊断（RA-24：预检非致命 + 构建后 always() 对比）
@@ -297,9 +343,15 @@ check(
     "sed -n 's/^ab_bin=//p'" in _post_run and "app-builder-bin.before" in _post_run,
 )
 
-# ---- 10. 哈希校验失败即退出
-n_hash_exit = len(re.findall(r'SHA-256 (?:不匹配|mismatch)[\s\S]{0,80}?exit 1', text))
-check(f"所有 SHA-256 校验失败路径均 exit 1（找到 {n_hash_exit} 处）", n_hash_exit >= 4, "至少 4 个平台下载步骤")
+# ---- 10. 哈希校验失败即退出（RA-32：集中到重试脚本）
+check(
+    "FFmpeg 下载重试脚本在最终失败时 exit 1，且不含 || true 吞错",
+    fetch_src.rstrip().endswith("exit 1") and "|| true" not in fetch_src,
+)
+check(
+    "下载步骤无 continue-on-error（网络问题不得被隐藏）",
+    "continue-on-error" not in text,
+)
 
 # ---- 11. RA-27：元数据、extraResources 断链、候选验证强化
 PKG_PATH = ROOT / "apps/desktop/package.json"
@@ -405,6 +457,12 @@ check(
     "Missing bundled resource patterns" in _s20_code
     and "OK: server + ffmpeg/ffprobe resources are bundled" in _s20_code,
 )
+check(
+    "第 20 步生成 bundled-resources-manifest.txt（内嵌资源路径/字节数/SHA-256）",
+    "bundled-resources-manifest.txt" in _s20_code
+    and "SHA256" in _s20_code
+    and 'sha256sum < "$rpath"' in _s20_code,
+)
 
 _test_sh = ROOT / "scripts/tests/test_artifact_evidence.sh"
 _test_src = _test_sh.read_text(encoding="utf-8") if _test_sh.is_file() else ""
@@ -415,6 +473,56 @@ check(
     and "SIZE_BYTES" in _test_src
     and "GOT_EOL" in _test_src
     and "has space.dmg" in _test_src,
+)
+
+# ---- 13c. RA-32 artifact 最小化与保留期（配额风险控制）
+_upload = _step_by_name("Upload candidate artifact")
+_upload_with = (_upload.get("with") if isinstance(_upload, dict) else {}) or {}
+_upload_path = str(_upload_with.get("path", ""))
+_upload_lines = [ln.strip() for ln in _upload_path.splitlines() if ln.strip()]
+check(
+    "候选 artifact 不上传 *-unpacked / mac-arm64 / mac 目录（配额最小化）",
+    all(k not in _upload_path for k in ("win-unpacked", "linux-unpacked", "mac-arm64"))
+    and "apps/desktop/release/" not in _upload_lines
+    and "apps/desktop/release" not in _upload_lines,
+    f"path={_upload_path[:300]}",
+)
+check(
+    "候选 artifact 保留交付件、更新元数据、构建追溯与 manifest",
+    all(k in _upload_path for k in (
+        "apps/desktop/release/*.exe",
+        "apps/desktop/release/*.exe.blockmap",
+        "apps/desktop/release/*.dmg",
+        "apps/desktop/release/*.dmg.blockmap",
+        "apps/desktop/release/*.zip",
+        "apps/desktop/release/*.zip.blockmap",
+        "apps/desktop/release/*.AppImage",
+        "apps/desktop/release/*.deb",
+        "apps/desktop/release/latest.yml",
+        "apps/desktop/release/latest-mac.yml",
+        "apps/desktop/release/latest-linux.yml",
+        "apps/desktop/release/builder-debug.yml",
+        "ffmpeg-bin-buildconf.txt",
+        "bundled-resources-manifest.txt",
+        "tests-ffmpeg-selfcheck/",
+    )),
+)
+check(
+    "候选 artifact retention-days 明确为 1 天（需所有者及时下载）",
+    _upload_with.get("retention-days") == 1,
+    f"实际: {_upload_with.get('retention-days')}",
+)
+check(
+    "候选 artifact if-no-files-found=error（交付件缺失即失败）",
+    _upload_with.get("if-no-files-found") == "error",
+    f"实际: {_upload_with.get('if-no-files-found')}",
+)
+_summary_upload = re.search(r"name: Upload summary[\s\S]*?retention-days:\s*(\d+)", text)
+_summary_ret = int(_summary_upload.group(1)) if _summary_upload else None
+check(
+    "汇总 artifact retention-days <= 7 天",
+    isinstance(_summary_ret, int) and 1 <= _summary_ret <= 7,
+    f"实际: {_summary_ret}",
 )
 
 # ---- 14. RA-32 F3：Windows 不得同时声明 nsis 与 portable（同名冲突）
