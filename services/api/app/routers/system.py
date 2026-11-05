@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..config import APP_NAME
 from ..db import UsageRecord, get_db
 from ..services import keyvault
 from ai_providers import (
@@ -139,6 +140,9 @@ async def health():
     env = await asyncio.to_thread(probe)
     ok = bool(env.get("ffmpeg") and env.get("ffprobe"))
     return {
+        # RA-34 F-2：应用身份字段。桌面端就绪检查据此确认监听端口的进程
+        # 确实是本后端，而不是占用该端口的其他程序。
+        "app": APP_NAME,
         "status": "ok" if ok else "degraded",
         "version": _version(),
         "ffmpeg": env.get("ffmpeg"),

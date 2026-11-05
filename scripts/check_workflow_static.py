@@ -382,18 +382,30 @@ except yaml.YAMLError:
     eb_doc = {}
 _eb_res = eb_doc.get("extraResources") or []
 _eb_froms = [r.get("from", "") for r in _eb_res if isinstance(r, dict)]
+# RA-27 契约（server 资源）+ RA-34 新增 web/dist 资源（F-3：前端独立分发）。
+_server_res = [r for r in _eb_res if isinstance(r, dict) and r.get("to") == "server"]
+_web_res = [
+    r for r in _eb_res
+    if isinstance(r, dict) and r.get("to") == "web/dist"
+]
 check(
-    "extraResources from 全部指向 ../../services/api/*（修复 Run 109150569887 四平台 apps/api/* 断链）",
-    len(_eb_res) == 2 and len(_eb_froms) == 2
-    and all(f.startswith("../../services/api/") for f in _eb_froms),
-    f"实际: {_eb_froms}",
+    "RA-27: server 类 extraResources 的 from 全部指向 ../../services/api/*"
+    "（修复 Run109150569887 apps/api/* 断链）",
+    len(_server_res) == 2
+    and all(str(r.get("from", "")).startswith("../../services/api/") for r in _server_res),
+    f"实际 server 项: {[r.get('from') for r in _server_res]}",
 )
 check(
-    "extraResources 每项 to: server 且 filter 匹配 vns-server/ffmpeg/ffprobe",
-    all(r.get("to") == "server" for r in _eb_res)
-    and any("vns-server*" in (r.get("filter") or []) for r in _eb_res)
-    and any("ffmpeg*" in (r.get("filter") or []) for r in _eb_res)
-    and any("ffprobe*" in (r.get("filter") or []) for r in _eb_res),
+    "RA-27: server 类资源 filter 覆盖 vns-server/ffmpeg/ffprobe",
+    any("vns-server*" in (r.get("filter") or []) for r in _server_res)
+    and any("ffmpeg*" in (r.get("filter") or []) for r in _server_res)
+    and any("ffprobe*" in (r.get("filter") or []) for r in _server_res),
+)
+check(
+    "RA-34 F-3: extraResources 含前端资源 ../../apps/web/dist -> web/dist（安装内可核验路径，"
+    "由 Electron 以 VC_FRONTEND_DIST 注入冻结后端）",
+    len(_web_res) == 1 and _web_res[0].get("from") == "../../apps/web/dist",
+    f"实际 web 项: {[r.get('from') for r in _web_res]}",
 )
 
 _s19 = _step_by_name("Record artifact info")
@@ -555,6 +567,37 @@ check(
     'L-1：workflow eb_target 不含 blockmap 相关关键字（仅声明 target+arch）',
     all('blockmap' not in tt.lower() for tt in eb_targets),
     '实际: %s' % eb_targets,
+)
+
+# ---- 16. RA-34：冻结后端 CI 运行自检（Windows 硬门禁）
+_s_smoke = _step_by_name('Smoke test frozen backend')
+_smoke_run = str((_s_smoke or {}).get('run', '')) if isinstance(_s_smoke, dict) else ''
+check(
+    'RA-34: Windows job 含 "Smoke test frozen backend" 步骤（真实启动冻结 exe，'
+    '不得以源码 import/构建成功替代）',
+    isinstance(_s_smoke, dict) and bool(_smoke_run),
+)
+check(
+    'RA-34: 自检步骤仅 success() 且限定 win 平台（候选门禁语义）',
+    str((_s_smoke or {}).get('if', '')) == "success() && matrix.platform == 'win'",
+    '实际 if: %s' % (_s_smoke or {}).get('if'),
+)
+check(
+    'RA-34: 自检步骤针对打包产物本体 resources/server/vns-server.exe 与 resources/web/dist（安装要分发的字节）',
+    'resources' in _smoke_run and 'server/vns-server.exe' in _smoke_run
+    and 'web/dist' in _smoke_run,
+)
+check(
+    'RA-34: 自检脚本 scripts/ci/test_frozen_backend_smoke.sh 存在且含场景 A/B/C 与 SMOKE_RESULT 判定',
+    (ROOT / 'scripts/ci/test_frozen_backend_smoke.sh').exists()
+    and 'SMOKE_RESULT' in (ROOT / 'scripts/ci/test_frozen_backend_smoke.sh').read_text(encoding='utf-8'),
+)
+check(
+    'RA-34: 自检在 manifest 验证之后、Upload candidate 之前执行（先验后传）',
+    isinstance(_s_smoke, dict)
+    and isinstance(_step_by_name('Upload candidate artifact'), dict)
+    and [s.get('name') for s in job['steps']].index(_s_smoke.get('name'))
+    < [s.get('name') for s in job['steps']].index(_step_by_name('Upload candidate artifact').get('name')),
 )
 
 # ---- 结果

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,7 +41,20 @@ __all__ = [
 
 # services/api/app/config.py -> services/api/app -> services/api -> <repo>
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-DATA_DIR = Path(os.getenv("VC_DATA_DIR") or (ROOT_DIR / "data")).resolve()
+
+# RA-34 F-3：冻结（PyInstaller）模式下 __file__ 位于临时解包目录，
+# ROOT_DIR/data 既不可控也不持久。冻结模式必须显式注入 VC_DATA_DIR，
+# 缺失立即失败，不允许静默回退（实证：RA-33 候选包无法写入用户数据）。
+FROZEN = bool(getattr(sys, "frozen", False))
+
+_ENV_DATA_DIR = os.getenv("VC_DATA_DIR")
+if FROZEN and not _ENV_DATA_DIR:
+    raise SystemExit(
+        "VC_DATA_DIR is required in frozen (packaged) mode: refusing to fall back "
+        f"to the temporary bundle dir ({ROOT_DIR / 'data'}). "
+        "The desktop launcher must inject a persistent per-user data directory."
+    )
+DATA_DIR = Path(_ENV_DATA_DIR or (ROOT_DIR / "data")).resolve()
 
 UPLOAD_DIR = DATA_DIR / "uploads"
 WORK_DIR = DATA_DIR / "work"

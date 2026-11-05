@@ -714,6 +714,37 @@ jobs:
           echo "OK: server + ffmpeg/ffprobe resources are bundled under $SERVER_RES"
 
       # --------------------------------------------------------------
+      # RA-34: 冻结后端真实运行自检（Windows CI 硬门禁）
+      # 对最终打包进安装器的 resources/server/vns-server.exe 本体执行：
+      #   A. 独立临时 VC_DATA_DIR + 非默认端口 + VC_FRONTEND_DIST 启动，
+      #      健康检查验证应用身份（非任意 200），关键模块导入门禁，
+      #      数据目录生效（station.db/logs），前端 SPA 可读取
+      #   B. 主动占用端口 -> 必须快速 exit 4 "cannot bind"（不得把占用者
+      #      响应当作后端 Ready）
+      #   C. 冻结模式缺 VC_DATA_DIR -> 必须拒绝启动（不得静默回退开发目录）
+      # 任一项 FAIL -> 步骤 exit 1 -> 候选包不通过。
+      # 不能用源码 import 测试、spec 静态检查或构建成功替代本步骤。
+      # --------------------------------------------------------------
+      - name: Smoke test frozen backend (RA-34, Windows hard gate)
+        if: success() && matrix.platform == 'win'
+        shell: bash
+        run: |
+          set -e
+          RES="$GITHUB_WORKSPACE/apps/desktop/release/win-unpacked/resources"
+          SRV="$RES/server/vns-server.exe"
+          WEBD="$RES/web/dist"
+          if [ ! -f "$SRV" ]; then
+            echo "##[error]frozen backend not found in packaged resources: $SRV"
+            exit 1
+          fi
+          if [ ! -f "$WEBD/index.html" ]; then
+            echo "##[error]bundled frontend not found in packaged resources: $WEBD/index.html"
+            exit 1
+          fi
+          bash scripts/ci/test_frozen_backend_smoke.sh \
+            "$SRV" "$WEBD" "$RES/server/ffmpeg.exe" "$RES/server/ffprobe.exe"
+
+      # --------------------------------------------------------------
       # 上传候选制品（仅 Actions artifact，不创建 GitHub Release）
       # --------------------------------------------------------------
       - name: Upload candidate artifact

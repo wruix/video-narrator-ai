@@ -10,6 +10,7 @@
  */
 
 import { app, BrowserWindow, Menu, dialog, shell } from "electron";
+import { join } from "path";
 import { repoRoot, startBackend, type StartedBackend } from "./backend";
 import { dataDir } from "./paths";
 
@@ -129,6 +130,8 @@ if (!app.requestSingleInstanceLock()) {
 
 app.whenReady().then(async () => {
   buildMenu();
+  // RA-34 F-3：桌面诊断日志目录（userData/logs），backend.ts 通过该 env 定位
+  process.env.VNS_DESKTOP_LOG_DIR = join(app.getPath("userData"), "logs");
   try {
     const root = repoRoot(app.getAppPath());
     backend = await startBackend(root, DEFAULT_PORT, process.resourcesPath, (line) =>

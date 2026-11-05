@@ -39,6 +39,14 @@ extraResources:
     filter:
       - "ffmpeg*"
       - "ffprobe*"
+  # RA-34 F-3：前端产物独立分发到 resources/web/dist，由 Electron 主进程
+  # 以 VC_FRONTEND_DIST 显式注入冻结后端（backend.ts）。放在 extraResources
+  # 而非仅嵌进 PyInstaller 归档，安装产物中可直接核验（路径确定、可哈希）。
+  # CI 构建顺序保证：Build web assets 先于 Package desktop 执行。
+  - from: ../../apps/web/dist
+    to: web/dist
+    filter:
+      - "**/*"
 
 asar: true
 

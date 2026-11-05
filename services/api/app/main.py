@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import traceback
 from pathlib import Path
 
@@ -111,11 +112,26 @@ app.include_router(projects.router, prefix=API_PREFIX)
 
 
 def _find_frontend_dist() -> Path | None:
-    """定位前端构建产物：优先环境变量，其次 monorepo 约定位置。"""
+    """定位前端构建产物。
+
+    RA-34 F-3：冻结（打包）模式与开发模式严格分离：
+      * 冻结模式：只认 VC_FRONTEND_DIST 注入或随包 web/dist（PyInstaller datas），
+        绝不回退到开发目录（开发目录在用户机器上不存在且可能指向陈旧前端）。
+        两者皆无 -> None，由 missing_frontend 分支给出明确 404（可诊断）。
+      * 开发模式：保持原逻辑（环境变量 -> monorepo 约定位置）。
+    """
     env = os.getenv("VC_FRONTEND_DIST")
     if env:
         p = Path(env)
         return p if p.exists() else None
+
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            bundled = Path(meipass) / "web" / "dist"
+            return bundled if bundled.exists() else None
+        return None
+
     for candidate in (
         ROOT_DIR / "apps" / "web" / "dist",
         ROOT_DIR / "frontend" / "dist",

@@ -7,7 +7,19 @@
 import sys  # noqa: E402
 from pathlib import Path
 
-REPO_ROOT = Path(SPECPATH).parent.parent.parent  # noqa: F821
+# RA-34 F-1 修复：SPECPATH 是 spec 文件所在目录（services/api），
+# 上溯两级才是仓库根。原版多上溯一级导致 pathex 指向不存在的
+# <repo父目录>/packages/*，PyInstaller 对缺失 hiddenimport 只告警不报错，
+# 产出物静默缺失 media_core/ai_providers（Run 41384939572 冻结产物实证，
+# RA-33 直跑复现 ModuleNotFoundError: No module named 'media_core'）。
+REPO_ROOT = Path(SPECPATH).resolve().parent.parent  # noqa: F821
+
+# 关键模块硬失败：源码目录缺失时立即失败，不允许静默出残包。
+_MISSING = [str(REPO_ROOT / "packages" / p)
+            for p in ("media-core", "ai-providers")
+            if not (REPO_ROOT / "packages" / p).is_dir()]
+if _MISSING:
+    raise SystemExit(f"server.spec: required package sources missing: {_MISSING}")
 
 datas = []
 hiddenimports = [
@@ -20,6 +32,15 @@ hiddenimports = [
     "ai_providers",
     "media_core",
 ]
+
+# RA-34 F-1：显式收集两个本地包的子模块（editable 安装下 PyInstaller 会漏采）。
+from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
+
+for _pkg in ("media_core", "ai_providers"):
+    _subs = collect_submodules(_pkg)
+    if not _subs:
+        raise SystemExit(f"server.spec: collect_submodules('{_pkg}') returned empty")
+    hiddenimports += _subs
 
 # 打包进前端静态资源（存在才带）
 web_dist = REPO_ROOT / "apps" / "web" / "dist"
