@@ -4,6 +4,10 @@
 
 **AI 视频解说工作站** —— 多模型、可切换、双语、跨平台。
 
+> **状态：1.0.0 Release Candidate（候选版）。** 此为开放核心源代码。构建与 Windows
+> 冻结后端 smoke 已通过 CI 验证；**公开可下载安装包与客户环境完整验收尚未发布**。
+> 详见下方[发布状态](#发布状态)。
+
 [English](README.md) · [简体中文](README.zh-CN.md) · [许可与边界](LICENSING.md) · [贡献指南](CONTRIBUTING.md)
 
 </div>
@@ -32,6 +36,7 @@
 - [套餐与额度](#套餐与额度)
 - [测试](#测试)
 - [路线图](#路线图)
+- [发布状态](#发布状态)
 - [许可证](#许可证)
 
 ---
@@ -66,15 +71,15 @@
 | --- | --- | --- |
 | Python | 3.11+ | 后端运行时 |
 | Node.js | 18+ | 仅构建前端时需要 |
-| FFmpeg | 6.0+ | 必须同时包含 `ffmpeg` 与 `ffprobe` |
+| FFmpeg | 9.0.2 | 必须同时包含 `ffmpeg` 与 `ffprobe`；版本已锁定为 `config/ffmpeg-assets-lock.md` 中的 9.0.2（随包二进制需附 GPL 许可文本，见 THIRD_PARTY_NOTICES.md） |
 
 ```bash
 # Debian / Ubuntu
 sudo apt install ffmpeg fonts-noto-cjk
 # macOS
 brew install ffmpeg
-# Windows
-winget install --id BtbN.FFmpeg.GPL.8.1 --exact
+# Windows（与 config/ffmpeg-assets-lock.md 一致的 9.0.2 锁定版本）
+winget install --id Gyan.FFmpeg  # 或从 https://www.gyan.dev/ffmpeg/builds/packages/ 下载锁定的 9.0.2 包
 ```
 
 Linux 上 `fonts-noto-cjk` 很重要：没有中文字体，烧录的字幕会变成方块。
@@ -111,8 +116,7 @@ Edge 语音完全不需要 Key，所以你在注册任何平台之前就能把�
 
 ### 桌面版（Windows / macOS / Linux）
 
-从 Releases 下载安装包。桌面外壳会启动本机 Python 后端并把窗口指向它——
-界面与网页版完全一致。
+本地构建桌面外壳（**尚无公开可下载安装包**，见[发布状态](#发布状态)）：
 
 ```bash
 npm install
@@ -275,3 +279,23 @@ Apache-2.0，见 [LICENSE](LICENSE)。
 见 [LICENSING.md](LICENSING.md)。
 
 第三方组件与其许可证：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+---
+
+## 发布状态
+
+**VideoNarrator AI 1.0.0 — Release Candidate（候选版，开源代码）。**
+
+- **此处公开的内容：** Apache-2.0 下的开放核心源代码、锁定资产清单与 CI 工作流。
+  本仓库**不含**编译好的安装包制品。
+- **已验证：** 跨平台构建与 Windows 冻结后端 smoke 已通过 CI（GitHub Actions，
+  release-candidate/ra-15 分支）。
+- **尚未完成：**
+  - 公开可下载安装包（GitHub Actions 制品上传因账户级存储配额受限，暂无 Release 制品）。
+  - 客户环境 / 端到端完整验收。
+- **AI 服务由用户自配密钥** —— 本项目**不内置任何 API Key**。请在设置页填入自己的
+  密钥（服务端 Fernet 加密存储，浏览器只见掩码）。部分 TTS/语音服务（如微软 Edge 语音）
+  无需密钥。
+- **FFmpeg：** 仓库**不打包** FFmpeg 二进制；CI 按 `config/ffmpeg-assets-lock.md` 下载
+  锁定的 9.0.2 构建。若你构建并随安装包分发这些 FFmpeg 二进制，须随附其 GPL 许可文本
+  与源码获取方式（见 THIRD_PARTY_NOTICES.md）——GPL 义务针对**该安装包**，而非本源码仓库。

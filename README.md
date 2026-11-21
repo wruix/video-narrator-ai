@@ -4,6 +4,11 @@
 
 **AI Video Narration Workstation** — multi-model, bilingual, cross-platform.
 
+> **Status: 1.0.0 Release Candidate.** This is the open-core source code. The build and
+> the Windows frozen-backend smoke are CI-verified; a public downloadable installer and
+> full customer-environment acceptance are **not yet released**. See
+> [Release notes](#release-status) below.
+
 [English](README.md) · [简体中文](README.zh-CN.md) · [许可与边界](LICENSING.md) · [贡献指南](CONTRIBUTING.md)
 
 </div>
@@ -33,6 +38,7 @@ scripts you can review and edit before a single frame is rendered.
 - [Tiers & quotas](#tiers--quotas)
 - [Testing](#testing)
 - [Roadmap](#roadmap)
+- [Release status](#release-status)
 - [License](#license)
 
 ---
@@ -67,15 +73,15 @@ Everything runs on your own machine. Video never leaves the box.
 | --- | --- | --- |
 | Python | 3.11+ | Backend runtime |
 | Node.js | 18+ | Only to build the frontend |
-| FFmpeg | 6.0+ | Must include `ffmpeg` **and** `ffprobe` |
+| FFmpeg | 9.0.2 | Must include `ffmpeg` **and** `ffprobe`; pinned to the locked 9.0.2 builds in `config/ffmpeg-assets-lock.md` (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the GPL license text that must accompany any bundled binary) |
 
 ```bash
 # Debian / Ubuntu
 sudo apt install ffmpeg fonts-noto-cjk
 # macOS
 brew install ffmpeg
-# Windows
-winget install --id BtbN.FFmpeg.GPL.8.1 --exact
+# Windows (9.0.2 pinned build, matches config/ffmpeg-assets-lock.md)
+winget install --id Gyan.FFmpeg  # or download the pinned 9.0.2 package from https://www.gyan.dev/ffmpeg/builds/packages/
 ```
 
 `fonts-noto-cjk` matters on Linux: without a CJK font, burned-in subtitles render as boxes.
@@ -112,8 +118,8 @@ for anything.
 
 ### Desktop (Windows / macOS / Linux)
 
-Download an installer from the releases page. The desktop shell starts a local Python
-backend and points its window at it — the UI is byte-for-byte the same as the web app.
+Build the desktop shell locally (a public downloadable installer is **not yet
+published**; see [Release status](#release-status)):
 
 ```bash
 npm install
@@ -280,3 +286,26 @@ proprietary product that talks to this code over its public API; see
 if you want to restrict closed-source hosting later.
 
 Third-party components and their licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+---
+
+## Release status
+
+**VideoNarrator AI 1.0.0 — Release Candidate (open source code).**
+
+- **What is public here:** the open-core source code under Apache-2.0, plus the locked
+  asset manifests and CI workflow. No compiled installer artifact is published here.
+- **Verified:** cross-platform builds and the Windows frozen-backend smoke are
+  CI-verified (GitHub Actions, release-candidate/ra-15).
+- **Not yet done:**
+  - A public, downloadable installer (GitHub Actions artifact upload is blocked by an
+    account-level storage quota, so no Release artifact exists yet).
+  - Full customer-environment / end-to-end acceptance.
+- **You configure your own AI providers** — this project ships **no API keys**.
+  Add your own keys via Settings (they are encrypted at rest; the browser only sees a
+  mask). Some TTS/voice services (e.g. Microsoft Edge TTS) need no key at all.
+- **FFmpeg:** the repo does **not** bundle FFmpeg binaries; CI downloads the pinned
+  9.0.2 builds per `config/ffmpeg-assets-lock.md`. If you build an installer that ships
+  those FFmpeg binaries, you must attach their GPL license text and source availability
+  (see THIRD_PARTY_NOTICES.md) — the GPL obligations apply to that installer, not to this
+  source repository.
