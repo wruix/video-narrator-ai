@@ -122,7 +122,7 @@ jobs:
           # RA-32: 统一走有上限重试 + 严格 SHA-256 校验；最终失败即 exit 1。
           # 保留锁定哈希（config/ffmpeg-assets-lock.md），不得跳过校验。
           bash scripts/ci/fetch_with_retry.sh \
-            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" \
+            "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip" \
             "$TMP/ffmpeg-essentials.zip" \
             "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba" \
             "Windows FFmpeg essentials"

@@ -16,10 +16,11 @@ CI 构建时据此验证下载完整性。任何未填入实际哈希的条目�
 |------|-----|
 | 来源 | https://www.gyan.dev/ffmpeg/builds/ |
 | 版本 | 9.0.2 |
-| 下载 URL | https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip |
-| 格式 | ZIP (109 MB) |
+| 下载 URL | https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip |
+| 格式 | ZIP (~115 MB / 114,768,076 B) |
 | SHA-256 | `60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba` |
-| 校验来源 | https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256（官方发布页） |
+| 校验来源 | 本地下载复核（RA-35, 2026-11-21）：packages/ffmpeg-9.0.2-essentials_build.zip 实测 sha=60f46726，内容 FFmpeg 9.0.2 essentials（GPL，含 libx264/libx265），与 macOS/Linux Martin Riedl 9.0.2 四平台同版本 |
+| URL 备注 | RA-35 起改用版本固定 dated 包（packages/…9.0.2…）；原 rolling 包 ffmpeg-release-essentials.zip 已漂移到 9.1（b9bbbb3a…），不再作为锁定源，避免上游滚动换包破坏哈希锁定 |
 | 架构 | x86_64 (Windows, target-os=mingw32, UCRT64) |
 | 许可证 | GPL-3.0（`--enable-gpl` 已启用，含 libx264/libx265 等 GPL 库） |
 | 验证时间 | RA-13, 2026-10-23 |
